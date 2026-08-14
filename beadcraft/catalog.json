@@ -1,0 +1,70 @@
+{
+  "patterns" : [
+    {
+      "id" : "strawberry",
+      "imagePath" : "patterns/10_square_strawberry.png",
+      "layout" : "square",
+      "name" : "🍓 いちご",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "fish",
+      "imagePath" : "patterns/20_square_fish.png",
+      "layout" : "square",
+      "name" : "🐟 さかな",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "moon",
+      "imagePath" : "patterns/30_square_moon.png",
+      "layout" : "square",
+      "name" : "🌙 おつきさま",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "penguin",
+      "imagePath" : "patterns/40_square_penguin.png",
+      "layout" : "square",
+      "name" : "🐧 ぺんぎん",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "sunflower",
+      "imagePath" : "patterns/50_circle_sunflower.png",
+      "layout" : "circle",
+      "name" : "🌻 ひまわり",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "pumpkin",
+      "imagePath" : "patterns/60_square_pumpkin.png",
+      "layout" : "square",
+      "name" : "🎃 かぼちゃ",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "donut",
+      "imagePath" : "patterns/70_circle_donut.png",
+      "layout" : "circle",
+      "name" : "🍩 ドーナツ",
+      "requiresPro" : false,
+      "size" : 16
+    },
+    {
+      "id" : "rocket",
+      "imagePath" : "patterns/80_square_pro-rocket.png",
+      "layout" : "square",
+      "name" : "🚀 ロケット",
+      "requiresPro" : true,
+      "size" : 16
+    }
+  ],
+  "updatedAt" : "2026-08-14T15:53:38Z",
+  "version" : 1
+}
