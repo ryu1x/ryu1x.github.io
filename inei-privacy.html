@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>INEI プライバシーポリシー</title>
+<style>
+ :root{color-scheme:light dark}
+ body{max-width:42rem;margin:0 auto;padding:2.5rem 1.25rem 4rem;
+      font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+      line-height:1.9;color:#1b1b1d;background:#fbfbfa}
+ @media (prefers-color-scheme:dark){body{color:#e8e8ea;background:#141416}}
+ h1{font-size:1.5rem;letter-spacing:.04em;margin:0 0 .25rem}
+ h2{font-size:1.05rem;margin:2.5rem 0 .6rem;letter-spacing:.03em}
+ .sub{color:#8a8a90;font-size:.85rem;margin:0 0 2rem}
+ .lead{border-left:2px solid currentColor;padding-left:1rem;margin:2rem 0}
+ table{border-collapse:collapse;width:100%;font-size:.92rem;margin:.6rem 0}
+ th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid #d9d9dd;vertical-align:top}
+ @media (prefers-color-scheme:dark){th,td{border-color:#303036}}
+ th{width:11rem;font-weight:600;white-space:nowrap}
+ a{color:inherit}
+ footer{margin-top:3.5rem;font-size:.82rem;color:#8a8a90}
+ code{font-size:.9em}
+</style>
+</head>
+<body>
+<h1>INEI プライバシーポリシー</h1>
+<p class="sub">最終更新 2026年10月12日</p>
+
+<p class="lead">INEI は、撮影した画像および個人情報を、一切外部へ送信しません。
+アプリに通信を行うコードは含まれていません。</p>
+
+<h2>収集しない情報</h2>
+<p>開発者は、利用者を識別しうる情報を一切取得しません。具体的には以下を行いません。</p>
+<table>
+<tr><th>利用状況の解析</th><td>解析 SDK を組み込んでいません</td></tr>
+<tr><th>広告</th><td>広告を配信せず、広告識別子を利用しません</td></tr>
+<tr><th>アカウント</th><td>登録もログインもありません</td></tr>
+<tr><th>クラッシュ報告</th><td>独自の送信は行いません（※下記）</td></tr>
+</table>
+<p>※ App Store 経由でアプリを入手された場合、Apple の仕組みによる統計やクラッシュ情報が
+Apple に送られることがあります。これは Apple の管理下にあり、開発者が受け取るのは
+個人を特定しない集計のみです。詳細は Apple のプライバシーポリシーをご確認ください。</p>
+
+<h2>端末内で扱う情報</h2>
+<table>
+<tr><th>カメラ</th><td>写真を撮るために使用します。センサーの生データ（RAW）を読み取り、
+端末内でモノクロに現像します。</td></tr>
+<tr><th>写真ライブラリ</th><td>現像した写真の保存にのみ使用します（追加のみの権限）。
+既存の写真を読み取ることはありません。</td></tr>
+<tr><th>保存先</th><td>撮影データはアプリ内の領域に保存されます。アプリを削除すると
+一緒に削除されます。</td></tr>
+</table>
+
+<h2>位置情報について</h2>
+<p>INEI は位置情報を要求しません。ただし、端末のカメラ設定で位置情報の記録が有効な場合、
+<strong>撮影された画像に撮影場所が埋め込まれます</strong>。これは iOS 標準の動作で、
+純正カメラアプリと同じです。</p>
+<p>INEI は元データの情報（撮影日時・露出・レンズなど）を書き出す画像に引き継ぐため、
+位置情報が含まれていれば、それも引き継がれます。
+写真を他者へ共有する際は、この点にご注意ください。
+iOS の共有画面にある「オプション」から位置情報を除いて共有できます。</p>
+
+<h2>外部へ出る場合</h2>
+<p>画像が端末の外へ出るのは、利用者ご自身が共有・書き出しの操作を行ったときだけです。
+その先での扱いは、送信先のサービスやアプリの規約に従います。</p>
+
+<h2>子どものプライバシー</h2>
+<p>INEI は個人情報を収集しないため、年齢を問わず収集される情報はありません。</p>
+
+<h2>ポリシーの変更</h2>
+<p>内容を変更する場合は、このページを更新し、上部の最終更新日を改めます。</p>
+
+<h2>お問い合わせ</h2>
+<p><a href="mailto:ryu1xy@gmail.com">ryu1xy@gmail.com</a></p>
+
+<footer>INEI — Bayer RAW から直接モノクロをつくるカメラ</footer>
+</body>
+</html>
