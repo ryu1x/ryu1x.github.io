@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>INEI — Bayer RAW から直接つくるモノクロカメラ</title>
+<meta name="description" content="カラー画像を経由せず、センサーの生データから 16-bit 線形のモノクロをつくる iPhone のカメラ。">
+<style>
+ :root{color-scheme:light dark}
+ *{box-sizing:border-box}
+ body{max-width:44rem;margin:0 auto;padding:3rem 1.25rem 4rem;
+      font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+      line-height:1.9;color:#1b1b1d;background:#fbfbfa}
+ @media (prefers-color-scheme:dark){body{color:#e8e8ea;background:#141416}}
+ header{border-bottom:1px solid #d9d9dd;padding-bottom:2rem;margin-bottom:2.5rem}
+ @media (prefers-color-scheme:dark){header{border-color:#303036}}
+ h1{font-size:2rem;letter-spacing:.22em;margin:0 0 .4rem;font-weight:600}
+ .tag{font-size:1rem;color:#6a6a72;margin:0}
+ @media (prefers-color-scheme:dark){.tag{color:#9a9aa2}}
+ h2{font-size:1.05rem;margin:2.6rem 0 .5rem;letter-spacing:.03em}
+ .lead{font-size:1.05rem;border-left:2px solid currentColor;padding-left:1.1rem;margin:2rem 0}
+ table{border-collapse:collapse;width:100%;font-size:.93rem;margin:.6rem 0}
+ th,td{text-align:left;padding:.55rem .6rem;border-bottom:1px solid #d9d9dd;vertical-align:top}
+ @media (prefers-color-scheme:dark){th,td{border-color:#303036}}
+ th{width:9rem;font-weight:600;white-space:nowrap}
+ a{color:inherit}
+ ul{padding-left:1.2rem}
+ li{margin:.4rem 0}
+ footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid #d9d9dd;
+        font-size:.85rem;color:#8a8a90}
+ @media (prefers-color-scheme:dark){footer{border-color:#303036}}
+</style>
+</head>
+<body>
+<header>
+  <h1>INEI</h1>
+  <p class="tag">陰翳 — Bayer RAW から直接つくるモノクロカメラ</p>
+</header>
+
+<p class="lead">画面で見るためのモノクロ写真ではなく、<strong>焼かれた写真</strong>のように見えること。
+それが INEI のつくるものです。</p>
+
+<p>ふつうのカメラは、センサーの生データをいったんカラー写真に組み立て、そのあと色を抜いて
+モノクロにします。INEI はカラーを経由しません。センサーが受け取った光から、
+直接 16-bit の輝度をつくります。</p>
+
+<h2>静かであること</h2>
+<p>デジタル写真の「デジタルらしさ」は、中くらいの細かさの帯域のざわつき——ノイズと、
+輪郭強調のかかった細部——から来ています。INEI はそこを静めます。
+エッジの鋭さは保ったまま、ざわつきだけが落ちる。
+鋭さを捨てていないのに騒がしくない、という状態になります。</p>
+
+<h2>機械が勝手に場所ごとに変えない</h2>
+<p>最近のカメラは、画面の部分ごとに明るさを変えて「見やすい」写真をつくります。
+INEI は画面全体に 1 本の曲線しか当てません。1 枚のプリントが 1 本の曲線で焼かれるのと同じです。
+光の落ち方がそのまま残ります。</p>
+<p>そのかわり、置き場所は撮影者が決められます。ゾーンシステムの考え方で、
+「この影をここに置く」と指定すると、露出がそこから決まります。</p>
+
+<h2>撮ったあとで、フィルターを選べる</h2>
+<p>モノクロ写真には黄・橙・赤・緑のフィルターを使う伝統があります。空を暗く締める、
+肌を柔らかくする——撮影時に決める操作でした。</p>
+<p>INEI は赤・緑・青の三面をそのまま保存します。だからフィルターは、
+<strong>撮ったあとに選び直せます</strong>。トーンも粒状も同じです。</p>
+
+<h2>望遠は、計算でつくられる</h2>
+<p>生データのまま撮ると、ズームは使えません。長い焦点距離は切り出しになり、画素が減ります。
+INEI は手持ちの揺れを利用して複数枚を重ね、失った画素を取り戻します。
+補間では原理的に作れない細部が、そこに現れます。</p>
+
+<h2>対応</h2>
+<table>
+<tr><th>必要なもの</th><td>iOS 17 以降の iPhone</td></tr>
+<tr><th>レンズ</th><td>超広角（14mm 相当）／広角（26mm 相当）。35・50・75・90mm は切り出し</td></tr>
+<tr><th>保存形式</th><td>16-bit TIFF（線形輝度・三面マスター）と 10-bit HEIC</td></tr>
+<tr><th>通信</th><td>行いません</td></tr>
+</table>
+
+<h2>サポート</h2>
+<p>ご質問・ご要望・不具合のご報告は <a href="mailto:ryu1xy@gmail.com">ryu1xy@gmail.com</a> まで。
+不具合のご報告では、<strong>機種・iOS のバージョン・そのときの操作</strong>を
+書き添えていただけると助かります。</p>
+
+<p><a href="./inei-privacy.html">プライバシーポリシー</a></p>
+
+<footer>
+  <p>INEI © 2026</p>
+</footer>
+</body>
+</html>
