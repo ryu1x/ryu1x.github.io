@@ -19,6 +19,8 @@
   #hudBar { background:#ffd166; border-radius:5px; height:10px; width:100%; }
   #hudWarn { position:absolute; top:12px; right:16px; text-align:right; }
   #kata { color:#ffdd33; font-size:24px; font-weight:bold; display:none; }
+  #cpMsg { top:24%; left:50%; transform:translateX(-50%); color:#fff; font-size:32px; font-weight:bold;
+    text-align:center; white-space:nowrap; display:none; text-shadow:0 2px 0 #c0392b, 0 4px 14px rgba(0,0,0,.5); }
   #peekLabel { color:#fff; font-size:18px; font-weight:bold; display:none; }
   #center { inset:0; background:rgba(20,30,50,.55); color:#fff; display:none;
     flex-direction:column; align-items:center; justify-content:center; text-align:center; }
@@ -44,6 +46,7 @@
     #hud .big { font-size:16px; }
     #hudWarn { top:8px; right:10px; }
     #kata { font-size:20px; }
+    #cpMsg { font-size:23px; }
     #centerTitle { font-size:32px; }
     #centerSub { font-size:15px; padding:0 14px; }
     #goalPanel { top:16px; }
@@ -66,6 +69,7 @@
       <div id="hudDist" style="font-size:14px">速度 0 / ゴールまで 100m</div>
     </div>
     <div id="hudWarn" class="overlay"><div id="kata">カタカタ…</div><div id="peekLabel">のぞき中</div></div>
+    <div id="cpMsg" class="overlay">⛩️ チェックポイント</div>
     <div id="center" class="overlay"><div id="centerTitle">出前ダッシュ!!</div><div id="centerSub"></div></div>
     <div id="goalPanel" class="overlay">
       <div id="goalLine1">無事なざる 5枚！</div>
@@ -106,11 +110,27 @@ let plates = 5, choko = true;  // 残りざる枚数／猪口あり
 let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
+let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
 let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
 let goalT = 0, failMsg = "";
-const GOAL_DIST = 5800, STEP_X = 3200, JUMP_X = 4600; // 全力で走って約40秒になるよう調整（第1週で実測）
+const GOAL_DIST = 5800, CHECK_X = 2900, STEP_X = 3200, JUMP_X = 4600; // CHECK_X＝中間の鳥居チェックポイント（ゴールの中間。2026-11-05 ユーザー決定で企画書から復活）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
+// ---------- 障害物（2026-11-05 ユーザー決定。進路変更を強いる。2026-11-05 C回で実装） ----------
+// 位置は鳥居(2900)・段差(3200)・ジャンプ台(4600)から離し、衝撃が重ならないようにする。
+// 当たった場合の衝撃は段差と同程度（0.4 + speed*0.003）を角速度へ加える流儀で、
+// 単独では猪口・滑落のしきい値に届かず、ブレーキなどと重なったときだけ滑落に進む。
+// 崩壊には届かない設計。避ければ何も起きない。判定は障害物ごとに1回だけ。
+// halfW は当たり判定の半幅（laneX単位。隣の車線の中心までは90あるので、隣の車線に
+// すっぽり入っていれば当たらない。車線変更の途中でかすめると当たる）。
+const OBSTACLES = [
+  { x: 1400, lane: 1, halfW: 70, type: "truck", hit: false },  // 路駐の軽トラ（中央）
+  { x: 2100, lane: 0, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（左）
+  { x: 3800, lane: 2, halfW: 62, type: "crates", hit: false },// 店先のはみ出し荷物（右）
+  { x: 5100, lane: 0, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（左・ジャンプ後）
+];
+let obstacleHits = 0;
+let hitJolt = 0; // 障害物に当たった瞬間の描画だけの揺れ（衝撃の見た目。物理のtheta・しきい値には触れない）
 
 // ---------- 音（2D版のWebAudio合成を流用） ----------
 let AC = null;
@@ -128,6 +148,11 @@ function thud() { const a = ac(); if (!a) return; const o = a.createOscillator()
   o.type = "sine"; o.frequency.setValueAtTime(120, a.currentTime); o.frequency.exponentialRampToValueAtTime(40, a.currentTime + 0.25);
   g.gain.setValueAtTime(0.25, a.currentTime); g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.3);
   o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.3); }
+function checkpointSound() { const a = ac(); if (!a) return; // チェックポイント通過の短い2音（合成音のみ）
+  [880, 1318].forEach((fr, i) => { const o = a.createOscillator(), g = a.createGain(); const t0 = a.currentTime + i * 0.09;
+    o.type = "sine"; o.frequency.setValueAtTime(fr, t0);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
+    o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + 0.25); }); }
 
 // ---------- 入力（2D版と同一。対象要素が canvas → #gl に変わるだけ） ----------
 const glEl = document.getElementById("gl");
@@ -176,6 +201,8 @@ function start() {
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
   chokoFall = -1; slipFall = -1; collapseT = -1; invuln = 0; shake = 0; hop = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
+  checkpointDone = false; checkpointT = 0; checkpointShow = 0;
+  for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
 }
 
 // ---------- 更新（2D版からそのまま移植） ----------
@@ -191,6 +218,10 @@ function update(dt) {
   if (braking) speed = Math.max(0, speed - 260 * dt);
   else speed = Math.min(vmax, speed + 95 * dt);
   dist += speed * dt;
+
+  // 鳥居チェックポイント（中間地点。通過の記録と表示だけで、物理・評価・のびタイマーには触れない）
+  if (!checkpointDone && dist >= CHECK_X) { checkpointDone = true; checkpointT = t; checkpointShow = 2.2; checkpointSound(); }
+  if (checkpointShow > 0) checkpointShow = Math.max(0, checkpointShow - dt);
 
   // ジャンプ台（地形。段差の発展としてゴール手前に1つ置く。ボタンジャンプではない）
   if (!jumpDone && airT < 0 && dist >= JUMP_X) { jumpDone = true; airT = 0; airDur = 0.45 + speed * 0.0025; jumpSpeed = speed; }
@@ -225,6 +256,20 @@ function update(dt) {
   // 衝撃は速度依存：ゆっくり越えれば小さく、全速だと大きい
   if (!stepDone && dist >= STEP_X) { stepDone = true; omega += 0.4 + speed * 0.003; hop = 1; }
   if (hop > 0) hop = Math.max(0, hop - dt * 3);
+
+  // 障害物：進路変更を強いる。避ければ何も起きず、当たったら段差と同じ流儀で
+  // 角速度へ衝撃を加える（段差と同程度）。判定は障害物ごとに1回だけ。
+  // 無敵時間中も衝撃自体は加わる（段差と同じ扱い。3段階の判定は無敵時間が守る）。
+  for (const o of OBSTACLES) {
+    if (!o.hit && dist >= o.x) {
+      o.hit = true;
+      if (Math.abs(laneX - (o.lane - 1) * 90) < o.halfW) {
+        obstacleHits++;
+        omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
+        hitJolt = 1; shake = Math.max(shake, 4); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
+      }
+    }
+  }
 
   // ジャンプ中の飛行と着地：飛ぶ距離と着地の衝撃は離陸時の速度で決まる。
   // 着地だけでは崩壊しない（きれいに速く飛んでも傾きのピークは約0.25で、
@@ -467,6 +512,20 @@ const shopGroup = new THREE.Group();
   shopGroup.position.set(-5.6, 0, 0);
   scene.add(shopGroup);
 }
+// ---------- 鳥居チェックポイント（中間地点に1つだけ。路側の小物鳥居より大きく、道を跨ぐ） ----------
+// 企画書の「鳥居のチェックポイント」を復活させるもの（2026-11-05 ユーザー決定）。
+// 柱は道幅5.6の外（±3.25）に立て、くぐる対象として読める大きさにする。
+const checkpointGroup = new THREE.Group();
+{
+  const RED = 0xc0392b;
+  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, -3.25, 2.6, 0));
+  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, 3.25, 2.6, 0));
+  checkpointGroup.add(box(7.8, 0.44, 0.52, RED, 0, 5.42, 0)); // 笠木
+  checkpointGroup.add(box(6.5, 0.30, 0.42, RED, 0, 4.48, 0)); // 貫
+  checkpointGroup.add(box(0.30, 1.0, 0.34, RED, 0, 4.95, 0)); // 中柱
+  checkpointGroup.add(box(0.72, 0.92, 0.10, 0xf5f0e6, 0, 4.95, 0.24)); // 額（白板）
+  scene.add(checkpointGroup);
+}
 // ---------- 段差（白帯＋赤ライン。2D版と同じ見た目） ----------
 const stepGroup = new THREE.Group();
 {
@@ -499,6 +558,54 @@ const jumpGroup = new THREE.Group();
     jumpGroup.add(box(0.55, 0.32, 0.05, 0xf5f0e6, s * 2.62, 1.45, 0));
   }
   scene.add(jumpGroup);
+}
+// ---------- 障害物（進路変更を強いる。塔の後ろに隠れやすい中央車線のものほど、
+// 塔（上端約2.3）より高く・目立つ色の目印を立て、遠くから読めるようにする） ----------
+function makeKeiTruck() { // 路駐の軽トラ（荷台に段ボールを高く積んだ姿）
+  const g = new THREE.Group();
+  g.add(box(1.7, 0.7, 2.2, 0x7fb3d5, 0, 0.75, 0.3)); // 荷台（水色）
+  g.add(box(1.6, 0.75, 0.9, 0xf5f0e6, 0, 0.95, -0.95)); // 運転席（クリーム）
+  g.add(box(1.4, 0.4, 0.06, 0x2e4a5a, 0, 1.05, -1.38)); // フロントガラス
+  for (const [wx, wz] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.85], [0.8, 0.85]]) {
+    const w = cyl(0.28, 0.28, 0.2, 0x222222, wx, 0.28, wz, 10);
+    w.rotation.x = Math.PI / 2; g.add(w);
+  }
+  // 荷台の段ボール（塔より高く積み、遠くから読める目印にする。
+  // 一番上は赤にして、ベージュの塔と色で区別できるようにする）
+  g.add(box(1.4, 0.5, 1.0, 0xc9a86a, 0, 1.35, 0.35));
+  g.add(box(1.1, 0.5, 0.9, 0xd9b878, 0, 1.85, 0.35));
+  g.add(box(0.8, 0.45, 0.7, 0xc0392b, 0, 2.3, 0.35));
+  return g;
+}
+function makeCones() { // 工事のコーンと看板（看板は塔より高く立てる）
+  const g = new THREE.Group();
+  for (const cx of [-0.6, 0, 0.6]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 10), mat(0xff7b3c));
+    cone.position.set(cx, 0.35, -0.3); g.add(cone);
+    g.add(box(0.5, 0.06, 0.5, 0xd95f2b, cx, 0.03, -0.3));
+    const band = cyl(0.20, 0.24, 0.12, 0xf5f0e6, cx, 0.45, -0.3, 10); g.add(band);
+  }
+  for (const s of [-1, 1]) g.add(box(0.08, 1.7, 0.08, 0x5b4636, s * 0.55, 0.85, 0.45)); // 看板の脚
+  g.add(box(1.45, 1.15, 0.06, 0xc0392b, 0, 2.2, 0.42)); // 看板の赤い枠
+  g.add(box(1.3, 1.0, 0.08, 0xffd166, 0, 2.2, 0.45)); // 看板（黄色）
+  g.add(box(0.9, 0.14, 0.09, 0x333333, 0, 2.2, 0.47)); // 看板の黒い線
+  return g;
+}
+function makeCrates() { // 店先のはみ出し荷物（木箱を高く積んだ山）
+  const g = new THREE.Group();
+  const wood = [0xa9713f, 0x8a6a2f];
+  for (let i = 0; i < 3; i++) g.add(box(0.7, 0.7, 0.7, wood[i % 2], -0.75 + i * 0.75, 0.35, 0));
+  for (let i = 0; i < 2; i++) g.add(box(0.7, 0.7, 0.7, wood[(i + 1) % 2], -0.38 + i * 0.76, 1.05, 0));
+  g.add(box(0.7, 0.7, 0.7, 0xa9713f, 0, 1.75, 0));
+  const basket = cyl(0.32, 0.26, 0.35, 0xe8c877, 0, 2.28, 0, 10); g.add(basket); // 一番上にざる
+  return g;
+}
+const obstacleMeshes = [];
+for (const o of OBSTACLES) {
+  const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones() : makeCrates();
+  g.position.x = (o.lane - 1) * 90 / UNIT * 1.03; // 車線の3D位置（バイクと同じ換算）
+  scene.add(g);
+  obstacleMeshes.push({ mesh: g, def: o });
 }
 // ---------- 橋本さん宅＋おばあちゃん（ゴール） ----------
 const goalHouse = new THREE.Group();
@@ -641,6 +748,10 @@ function syncWorld() {
   // 松月庵（序盤・左側）
   shopGroup.position.z = -(200 - dist) / UNIT;
   shopGroup.visible = dist < 1600;
+  // 鳥居チェックポイント（中間地点）
+  const relCp = CHECK_X - dist;
+  checkpointGroup.position.z = -relCp / UNIT;
+  checkpointGroup.visible = relCp > -120 && relCp < 2600;
   // 段差
   const relStep = STEP_X - dist;
   stepGroup.position.z = -relStep / UNIT;
@@ -649,6 +760,12 @@ function syncWorld() {
   const relJump = JUMP_X - dist;
   jumpGroup.position.z = -relJump / UNIT;
   jumpGroup.visible = !jumpDone && relJump > -80 && relJump < 2400;
+  // 障害物（車線ごとに配置。通り過ぎたら隠す）
+  for (const o of obstacleMeshes) {
+    const rel = o.def.x - dist;
+    o.mesh.position.z = -rel / UNIT;
+    o.mesh.visible = rel > -80 && rel < 2400;
+  }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
   if (state === "goal") relHouse = 620;
@@ -670,8 +787,10 @@ function syncWorld() {
     groundShadowMat.opacity = 0.25 * shF;
   }
   // 塔：2D版と同じ「上の段ほど大きくずれる」表現
-  towerGroup.rotation.z = sway * 0.10;
-  towerGroup.rotation.x = -theta * 0.30; // 前傾（theta>0）で塔の上が前方（-Z）へ
+  towerGroup.rotation.z = sway * 0.10 + hitJolt * 0.10; // 描画のみ：衝突時の横への揺れ
+  towerGroup.rotation.x = -theta * 0.90 - hitJolt * 0.30; // 描画のみ3倍（旧0.30→0.90）。物理のtheta・しきい値・失敗3段階には触れていない。
+  // 衝突時の描画だけの前への揺れ（hitJolt、約0.5秒で消える）。物理の傾きとは別物。
+  // 崩壊しきい値0.44では描画約23度、着地ピーク0.25では約13度になり、チェイス視点でも傾きが読める狙い。
   const failF = (state === "fail" && collapseT >= 0) ? Math.min(1, collapseT * 1.4) : 0;
   for (let i = 0; i < 5; i++) {
     const p = plateMeshes[i];
@@ -693,15 +812,15 @@ function syncWorld() {
   const chokoOff = (sway * 6 * 5 + Math.sin(theta) * 6 * 2) / UNIT;
   chokoMesh.visible = choko;
   chokoMesh.position.set(chokoOff + CHOKO_DX, plates * ZARU_PITCH + 0.02, -Math.sin(theta) * 6 * 0.045 + CHOKO_DZ);
-  // 滑落演出（開始位置は新しい猪口位置＝最上段の手前右の隅に合わせ、そこから右端の外へ滑り落ちる）
-  if (chokoFall >= 0 && chokoFall < 1) {
-    const f = chokoFall;
+  // 滑落演出（描画のみ：1.8秒かけて滑り落ちる。従来1秒では実画面で見逃しやすかったため。物理・しきい値には触れていない）
+  if (chokoFall >= 0 && chokoFall < 1.8) {
+    const f = chokoFall / 1.8;
     fallChokoMesh.visible = true;
     fallChokoMesh.position.set(CHOKO_DX + f * 1.2, BOX_TOP + plates * ZARU_PITCH + 0.02 - f * f * 2.9, TOWER_Z + CHOKO_DZ);
     fallChokoMesh.rotation.z = -f * 1.2;
   } else fallChokoMesh.visible = false;
-  if (slipFall >= 0 && slipFall < 1) {
-    const f = slipFall;
+  if (slipFall >= 0 && slipFall < 1.8) {
+    const f = slipFall / 1.8;
     fallPlateMesh.visible = true;
     fallPlateMesh.position.set(-0.33 + f * 1.35, BOX_TOP + plates * ZARU_PITCH + 0.35 - f * f * 2.7, TOWER_Z);
     fallPlateMesh.rotation.z = f * 0.8;
@@ -723,6 +842,7 @@ const hudEl = document.getElementById("hud"), hudTime = document.getElementById(
   hudPlates = document.getElementById("hudPlates"), hudBar = document.getElementById("hudBar"),
   hudNobi = document.getElementById("hudNobi"), hudDist = document.getElementById("hudDist"),
   kataEl = document.getElementById("kata"), peekEl = document.getElementById("peekLabel"),
+  cpEl = document.getElementById("cpMsg"),
   centerEl = document.getElementById("center"), centerTitle = document.getElementById("centerTitle"),
   centerSub = document.getElementById("centerSub"),
   goalEl = document.getElementById("goalPanel"), goalL1 = document.getElementById("goalLine1"),
@@ -739,12 +859,21 @@ function syncUI() {
     hudBar.style.background = n >= 45 ? "#ffd166" : "#ff7b3c";
     hudNobi.textContent = "のび " + Math.round(n) + "%";
     let distText = "ゴールまで " + Math.max(0, Math.round((GOAL_DIST - dist) / UNIT)) + "m";
+    if (!checkpointDone) distText += " ・ 鳥居まで " + Math.max(0, Math.round((CHECK_X - dist) / UNIT)) + "m";
     if (!stepDone) distText += " ・ 段差まで " + Math.max(0, Math.round((STEP_X - dist) / UNIT)) + "m";
     if (!jumpDone) distText += " ・ ジャンプ台まで " + Math.max(0, Math.round((JUMP_X - dist) / UNIT)) + "m";
+    for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離
+      if (!o.hit && dist < o.x) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - dist) / UNIT)) + "m"; break; }
+    }
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
   }
+  // チェックポイント通過表示（2.2秒だけ。プレイ中のみ）
+  if (state === "play" && checkpointShow > 0) {
+    cpEl.style.display = "block";
+    cpEl.textContent = "⛩️ チェックポイント　" + checkpointT.toFixed(1) + "秒";
+  } else cpEl.style.display = "none";
   if (state === "title") {
     centerEl.style.display = "flex";
     centerTitle.textContent = "出前ダッシュ!!";
@@ -758,7 +887,7 @@ function syncUI() {
     goalEl.style.display = "block";
     goalL1.textContent = "無事なざる " + plates + "枚！";
     goalL2.textContent = "タイム " + t.toFixed(1) + "秒 ・ 満足度 " + satisfaction() + "% ・ 評価 " + rank();
-    goalL3.textContent = grade() + "　タップ／Enterでもう一度";
+    goalL3.textContent = grade() + "　中間タイム " + checkpointT.toFixed(1) + "秒　タップ／Enterでもう一度";
     bubbleEl.style.display = "block"; // おばあちゃんの「ありがとね」
     if (firstRun) firstRun = false;
   } else { goalEl.style.display = "none"; bubbleEl.style.display = "none"; }
@@ -769,6 +898,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - (frame.last || now)) / 1000 || 0.016); frame.last = now;
   update(dt);
+  if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
   if (state === "fail") collapseT += dt;
   syncWorld();
@@ -781,6 +911,8 @@ window.__demae = { start, changeLane,
   get speed() { return speed; }, get theta() { return theta; }, get sway() { return sway; },
   get plates() { return plates; }, get choko() { return choko; },
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
+  get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
+  get obstacleHits() { return obstacleHits; },
   get braking() { return braking; }, keys };
 addEventListener("resize", fitViewport);
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
