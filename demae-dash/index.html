@@ -81,10 +81,11 @@
   <div id="pad">
     <button id="bLeft">◀ 進路</button>
     <button id="bBrake">ブレーキ（長押し）</button>
+    <button id="bAccel">アクセル（長押し）</button>
     <button id="bPeek">のぞく（長押し）</button>
     <button id="bRight">進路 ▶</button>
   </div>
-  <div id="hint">キーボード：←→＝進路変更／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　画面：左右フリック＝進路変更／長押し＝ブレーキ</div>
+  <div id="hint">キーボード：←→＝進路変更／スペース長押し＝ブレーキ／Shiftまたは↑長押し＝アクセル／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　画面：左右フリック＝進路変更／長押し＝ブレーキ</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -111,8 +112,8 @@ let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
-let braking = false, peeking = false, peekF = 0;
-let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
+let braking = false, accel = false, peeking = false, peekF = 0;
+let btnBrake = false, btnAccel = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
 let goalT = 0, failMsg = "";
 const GOAL_DIST = 5800, CHECK_X = 2900, STEP_X = 3200, JUMP_X = 4600; // CHECK_X＝中間の鳥居チェックポイント（ゴールの中間。2026-11-05 ユーザー決定で企画書から復活）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
@@ -158,7 +159,7 @@ function checkpointSound() { const a = ac(); if (!a) return; // チェックポ�
 const glEl = document.getElementById("gl");
 const keys = {};
 addEventListener("keydown", e => {
-  if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+  if (["ArrowLeft","ArrowRight","ArrowUp","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
   if (e.code === "ArrowLeft") changeLane(-1);
   if (e.code === "ArrowRight") changeLane(1);
@@ -172,6 +173,7 @@ function holdBtn(el, on, off) {
   el.addEventListener("mousedown", s); el.addEventListener("mouseup", x); el.addEventListener("mouseleave", x);
 }
 holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake = false);
+holdBtn(document.getElementById("bAccel"), () => btnAccel = true, () => btnAccel = false);
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
 document.getElementById("bLeft").addEventListener("click", () => { ac(); changeLane(-1); });
 document.getElementById("bRight").addEventListener("click", () => { ac(); changeLane(1); });
@@ -211,10 +213,11 @@ function update(dt) {
   t += dt;
   if (touchActive && !touchMoved && performance.now() - touchT > 150) touchBrake = true;
   braking = btnBrake || touchBrake || !!keys["Space"];
+  accel = btnAccel || !!keys["ShiftLeft"] || !!keys["ShiftRight"] || !!keys["ArrowUp"]; // アクセル（2026-11-06実装。ブレーキと対になる長押し操作）
   peeking = btnPeek || !!keys["KeyP"];
   peekF += ((peeking ? 1 : 0) - peekF) * Math.min(1, dt * 8);
   const slowF = slowT > 0 ? 0.6 : 1; if (slowT > 0) slowT -= dt;
-  const vmax = 150 * slowF;
+  const vmax = (accel ? 195 : 150) * slowF; // アクセル中は巡航より速く走れる。使わなければ従来の150のまま
   if (braking) speed = Math.max(0, speed - 260 * dt);
   else speed = Math.min(vmax, speed + 95 * dt);
   dist += speed * dt;
@@ -242,6 +245,7 @@ function update(dt) {
   let drive = 0;
   if (!airborne) {
     if (braking) drive += 4.0;            // ブレーキで前へ傾く
+    else if (accel && speed < vmax - 1) drive -= 2.0; // アクセルで後ろへ傾く（ブレーキと対。定常で約-0.12、猪口のしきい値0.30からは十分遠い）
     else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く
     drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
@@ -865,7 +869,7 @@ function syncUI() {
     for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離
       if (!o.hit && dist < o.x) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - dist) / UNIT)) + "m"; break; }
     }
-    hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
+    hudDist.textContent = "速度 " + Math.round(speed * 0.6) + (accel ? "・アクセル中" : "") + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
   }
@@ -913,7 +917,7 @@ window.__demae = { start, changeLane,
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
   get obstacleHits() { return obstacleHits; },
-  get braking() { return braking; }, keys };
+  get braking() { return braking; }, get accel() { return accel; }, keys };
 addEventListener("resize", fitViewport);
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
 requestAnimationFrame(frame);
