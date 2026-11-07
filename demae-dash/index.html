@@ -6,15 +6,22 @@
 <title>出前ダッシュ!! 橋本さん宅プロトタイプ（3D版 土台v1）</title>
 <style>
   html, body { margin:0; padding:0; background:#1b2a3a; height:100%; overflow:hidden;
-    font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN",sans-serif; }
+    font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN",sans-serif;
+    touch-action:manipulation; /* 2026-11-07：ダブルタップ拡大の防止。manipulation＝ダブルタップズーム無効＋ピンチは可 */ }
   #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; }
   #gl { position:relative; width:960px; height:540px; max-width:100vw; max-height:78vh; aspect-ratio:16/9;
     border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.45); touch-action:none; background:#7ec8f7; }
   #gl canvas { display:block; width:100%; height:100%; }
   .overlay { position:absolute; pointer-events:none; }
   #hud { top:12px; left:12px; background:rgba(0,0,0,.45); border-radius:10px; padding:10px 14px; color:#fff;
-    font-size:15px; line-height:1.5; min-width:270px; display:none; }
+    font-size:15px; line-height:1.5; min-width:270px; max-width:430px; display:none; }
+  /* 2026-11-06 B回：max-widthを追加。距離の行（速度／ゴール／鳥居／段差／障害物）が
+     1行で右端まで伸び、空の太陽の円と重なって末尾が見にくくなることがあったため。
+     幅を抑えて左側で折り返す。描画・表示だけの変更で物理・数値には触れていない。 */
   #hud .big { font-size:19px; font-weight:bold; }
+  /* 2026-11-07：word-break:keep-all。「ジャンプ台まで」が「ジ／ャンプ台まで」と
+     単語の途中で折り返されるのを防ぐ。表示だけの変更で物理・数値には触れない。 */
+  #hudDist { word-break:keep-all; }
   #hudBarWrap { background:rgba(255,255,255,.35); border-radius:5px; height:10px; width:200px; margin:4px 0; display:inline-block; vertical-align:middle; }
   #hudBar { background:#ffd166; border-radius:5px; height:10px; width:100%; }
   #hudWarn { position:absolute; top:12px; right:16px; text-align:right; }
@@ -33,9 +40,14 @@
   #goalLine3 { font-size:18px; margin-top:6px; }
   #bubble { position:absolute; right:12%; bottom:24%; background:#fff; color:#333; border-radius:14px;
     padding:10px 18px; font-size:22px; font-weight:bold; display:none; }
-  #pad { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:center; }
-  #pad button { font-size:18px; padding:12px 18px; border-radius:999px; border:0;
-    background:#fff7e6; color:#333; box-shadow:0 3px 0 #c9a86a; }
+  /* 2026-11-07 操作系の刷新（アクセル自動化・マリオカート式）：ボタンは進路・ブレーキ・のぞくの最小限に。
+     進路は左手側、ブレーキは右手の親指に届く右下に大きく。のぞくはブレーキの隣に小さく。 */
+  #pad { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:space-between;
+    width:100%; max-width:960px; padding:0 8px; box-sizing:border-box; }
+  .padGroup { display:flex; gap:10px; align-items:center; }
+  #pad button { font-size:20px; padding:14px 20px; border-radius:999px; border:0;
+    background:#fff7e6; color:#333; box-shadow:0 3px 0 #c9a86a; touch-action:manipulation; }
+  #bBrake { font-size:23px; padding:18px 30px; background:#ffe1a8; }
   #pad button:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
   #pad button.hold { background:#ffd166; }
   #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px; }
@@ -55,7 +67,8 @@
     #goalLine3 { font-size:14px; }
     #bubble { font-size:17px; right:6%; bottom:20%; }
     #pad { padding:0 6px; }
-    #pad button { font-size:17px; padding:13px 16px; }
+    #pad button { font-size:19px; padding:15px 18px; }
+    #bBrake { font-size:22px; padding:17px 26px; }
   }
 </style>
 </head>
@@ -79,13 +92,16 @@
     <div id="bubble">ありがとね</div>
   </div>
   <div id="pad">
-    <button id="bLeft">◀ 進路</button>
-    <button id="bBrake">ブレーキ（長押し）</button>
-    <button id="bAccel">アクセル（長押し）</button>
-    <button id="bPeek">のぞく（長押し）</button>
-    <button id="bRight">進路 ▶</button>
+    <div class="padGroup">
+      <button id="bLeft">◀ 進路</button>
+      <button id="bRight">進路 ▶</button>
+    </div>
+    <div class="padGroup">
+      <button id="bPeek">のぞく（長押し）</button>
+      <button id="bBrake">ブレーキ（長押し）</button>
+    </div>
   </div>
-  <div id="hint">キーボード：←→＝進路変更／スペース長押し＝ブレーキ／Shiftまたは↑長押し＝アクセル／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　画面：左右フリック＝進路変更／長押し＝ブレーキ</div>
+  <div id="hint">キーボード：←→＝進路変更／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -112,8 +128,8 @@ let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
-let braking = false, accel = false, peeking = false, peekF = 0;
-let btnBrake = false, btnAccel = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
+let braking = false, peeking = false, peekF = 0;
+let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
 let goalT = 0, failMsg = "";
 const GOAL_DIST = 5800, CHECK_X = 2900, STEP_X = 3200, JUMP_X = 4600; // CHECK_X＝中間の鳥居チェックポイント（ゴールの中間。2026-11-05 ユーザー決定で企画書から復活）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
@@ -124,14 +140,44 @@ const UNIT = 58; // dist → 3Dユニット換算
 // 崩壊には届かない設計。避ければ何も起きない。判定は障害物ごとに1回だけ。
 // halfW は当たり判定の半幅（laneX単位。隣の車線の中心までは90あるので、隣の車線に
 // すっぽり入っていれば当たらない。車線変更の途中でかすめると当たる）。
+// ---------- 判断の連続（2026-11-07 ユーザー決定。2026-11-07 C回で連なりに組み替え） ----------
+// 前の判断の結果が次の判断に影響する配置。避けた先の車線に次の障害物が来る。
+// ・1400中央の軽トラを左へ避ける → 2100は右のコーン（切り返し。左のままだと当たらないが、
+//   そのまま左にいると3800の右の荷物は避けられる代わりに5300の左のコーンに当たる）。
+// ・3200段差で揺れたまま → 3800は右の荷物（揺れた状態での回避。従来どおり）。
+// ・ジャンプ着地（約4760）の直後 → 5300は左のコーン（5100→5300へ。着地から約540・
+//   約2.9秒の余裕に広げ、着地ピーク0.28のまま判断させない。3800で左へ避けた人は
+//   そのまま左にいると当たるので、着地のあと中央へ寄る判断が要る）。
+// 抜けられるライン：左→中央→左→中央（自動走行Pで確認）。塔の物理の核・しきい値・
+// 鳥居／段差／ジャンプ台の位置は無変更。軽トラ（1400・中央）の位置も確定仕様のまま。
 const OBSTACLES = [
   { x: 1400, lane: 1, halfW: 70, type: "truck", hit: false },  // 路駐の軽トラ（中央）
-  { x: 2100, lane: 0, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（左）
+  { x: 2100, lane: 2, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（右・切り返し）
   { x: 3800, lane: 2, halfW: 62, type: "crates", hit: false },// 店先のはみ出し荷物（右）
-  { x: 5100, lane: 0, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（左・ジャンプ後）
+  { x: 5300, lane: 0, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（左・ジャンプ後。着地から約2.9秒）
 ];
 let obstacleHits = 0;
 let hitJolt = 0; // 障害物に当たった瞬間の描画だけの揺れ（衝撃の見た目。物理のtheta・しきい値には触れない）
+
+// ---------- 上り坂（2026-11-06 C回。見た目だけの坂。物理・速度には触れない） ----------
+// チェイス視点で先の道が持ち上がって見え、軽トラ（1400・中央）が塔の裏に
+// 隠れにくくなるかの実験。区間 800→2600 でなめらかに 5 上がり、その先は
+// 台地（+5）のままゴールまで続く。最大勾配は約14°（港町の坂として自然な範囲）。
+// 速度への影響は入れない（意図的に。物理の聖域に触れず、自動走行の数値を
+// 変えずに「見え方だけ」の実験にするため）。坂の先に海が見下ろせる構図は、
+// 素材第3便の vista_sea_01（坂の上から見下ろす港町と海）と同じ約束。
+const SLOPE_START = 800, SLOPE_END = 2600, SLOPE_H = 5;
+function slopeY(d) { // コース距離 d における地面の高さ（3D単位）
+  if (d <= SLOPE_START) return 0;
+  if (d >= SLOPE_END) return SLOPE_H;
+  const u = (d - SLOPE_START) / (SLOPE_END - SLOPE_START);
+  return SLOPE_H * (3 * u * u - 2 * u * u * u); // smoothstep
+}
+function slopeDeriv(d) { // slopeY の d による微分（道路の傾き用）
+  if (d <= SLOPE_START || d >= SLOPE_END) return 0;
+  const u = (d - SLOPE_START) / (SLOPE_END - SLOPE_START);
+  return SLOPE_H * 6 * u * (1 - u) / (SLOPE_END - SLOPE_START);
+}
 
 // ---------- 音（2D版のWebAudio合成を流用） ----------
 let AC = null;
@@ -155,11 +201,39 @@ function checkpointSound() { const a = ac(); if (!a) return; // チェックポ�
     g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
     o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + 0.25); }); }
 
+// ---------- エンジン音と風の音（2026-11-06 C回。スピード感の演出。合成音のみ） ----------
+// 速度に連動するだけの演出で、物理・しきい値には触れない。音量は小さめにし、
+// カタカタやチェックポイントの音を邪魔しない。タイトル・ゴール・失敗時は無音になる。
+let engineOsc = null, engineGain = null, windSrc = null, windGain = null, windFilter = null;
+function engineStart() {
+  const a = ac(); if (!a) return;
+  if (!engineOsc) {
+    engineOsc = a.createOscillator(); engineOsc.type = "sawtooth"; engineOsc.frequency.value = 55;
+    engineGain = a.createGain(); engineGain.gain.value = 0;
+    engineOsc.connect(engineGain); engineGain.connect(a.destination); engineOsc.start();
+    const len = a.sampleRate * 2, buf = a.createBuffer(1, len, a.sampleRate), ch = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+    windSrc = a.createBufferSource(); windSrc.buffer = buf; windSrc.loop = true;
+    windFilter = a.createBiquadFilter(); windFilter.type = "bandpass"; windFilter.frequency.value = 400; windFilter.Q.value = 0.6;
+    windGain = a.createGain(); windGain.gain.value = 0;
+    windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(a.destination); windSrc.start();
+  }
+  if (a.state === "suspended") a.resume();
+}
+function engineUpdate() {
+  if (!engineOsc) return;
+  const f = Math.min(1, Math.max(0, speed / 195));
+  engineOsc.frequency.value = 55 + speed * 0.45; // 巡航150で約122Hz、全開195で約143Hz
+  engineGain.gain.value = state === "play" ? 0.016 + f * 0.02 : 0;
+  windFilter.frequency.value = 300 + speed * 4;
+  windGain.gain.value = state === "play" ? f * f * 0.04 : 0;
+}
+
 // ---------- 入力（2D版と同一。対象要素が canvas → #gl に変わるだけ） ----------
 const glEl = document.getElementById("gl");
 const keys = {};
 addEventListener("keydown", e => {
-  if (["ArrowLeft","ArrowRight","ArrowUp","Space"].includes(e.code)) e.preventDefault();
+  if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
   if (e.code === "ArrowLeft") changeLane(-1);
   if (e.code === "ArrowRight") changeLane(1);
@@ -173,7 +247,6 @@ function holdBtn(el, on, off) {
   el.addEventListener("mousedown", s); el.addEventListener("mouseup", x); el.addEventListener("mouseleave", x);
 }
 holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake = false);
-holdBtn(document.getElementById("bAccel"), () => btnAccel = true, () => btnAccel = false);
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
 document.getElementById("bLeft").addEventListener("click", () => { ac(); changeLane(-1); });
 document.getElementById("bRight").addEventListener("click", () => { ac(); changeLane(1); });
@@ -205,6 +278,7 @@ function start() {
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
+  engineStart(); // エンジン音と風の音を始める（タイトル・ゴール・失敗時は無音）
 }
 
 // ---------- 更新（2D版からそのまま移植） ----------
@@ -213,11 +287,16 @@ function update(dt) {
   t += dt;
   if (touchActive && !touchMoved && performance.now() - touchT > 150) touchBrake = true;
   braking = btnBrake || touchBrake || !!keys["Space"];
-  accel = btnAccel || !!keys["ShiftLeft"] || !!keys["ShiftRight"] || !!keys["ArrowUp"]; // アクセル（2026-11-06実装。ブレーキと対になる長押し操作）
   peeking = btnPeek || !!keys["KeyP"];
   peekF += ((peeking ? 1 : 0) - peekF) * Math.min(1, dt * 8);
   const slowF = slowT > 0 ? 0.6 : 1; if (slowT > 0) slowT -= dt;
-  const vmax = (accel ? 195 : 150) * slowF; // アクセル中は巡航より速く走れる。使わなければ従来の150のまま
+  // アクセル自動化（2026-11-07 ユーザー決定。2026-11-06の長押しアクセルは廃止）：
+  // 上限速度は走り出し150から1秒に1.2ずつ上がり、37.5秒で195に達する。
+  // 走行中ずっと上がり続ける（ゴールまで上がり切らない）ので、ジャンプ台
+  // （約26秒地点）では約181と、全開195のときの着地ピーク0.29より少し余裕がある。
+  // 速くなるほど段差・着地の衝撃が大きい既存の速度依存が、そのまま速さの代償になる。
+  // ブレーキで速度を落とす判断が中心になる。塔の物理の核・しきい値は無変更。
+  const vmax = (150 + Math.min(45, t * 1.2)) * slowF;
   if (braking) speed = Math.max(0, speed - 260 * dt);
   else speed = Math.min(vmax, speed + 95 * dt);
   dist += speed * dt;
@@ -245,8 +324,7 @@ function update(dt) {
   let drive = 0;
   if (!airborne) {
     if (braking) drive += 4.0;            // ブレーキで前へ傾く
-    else if (accel && speed < vmax - 1) drive -= 2.0; // アクセルで後ろへ傾く（ブレーキと対。定常で約-0.12、猪口のしきい値0.30からは十分遠い）
-    else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く
+    else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）
     drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
   omega += (-16 * theta - 5.5 * omega + drive) * dt;
@@ -426,14 +504,19 @@ function buildVespa() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 280), mat(0xe8d9b0));
   ground.rotation.x = -Math.PI / 2; ground.position.set(0, -0.02, -60); scene.add(ground);
 }
-{ // 道路（本物の平面。台形は透視が作る）
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 280), mat(0x8d8d8d));
-  road.rotation.x = -Math.PI / 2; road.position.set(0, 0, -60); scene.add(road);
-  // 路肩の白線
+// ---------- 道路（区間ごとに分けた板。上り坂に沿って持ち上がる。2026-11-06 C回） ----------
+// 1枚の長い平面では坂に沿えないため、5単位（290）ごとの板に分ける。
+// 板はその区間の地面の高さと傾きに合わせる。継ぎ目は勾配の変化が
+// ゆっくりなので、ほとんど目立たない。白線は板の子として一緒に傾く。
+const roadSegs = [];
+for (let k = 0; k < 20; k++) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.PlaneGeometry(5.6, 5), mat(0x8d8d8d)));
   for (const sx of [-2.75, 2.75]) {
-    const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 280), mat(0xf5f0e6));
-    edge.rotation.x = -Math.PI / 2; edge.position.set(sx, 0.005, -60); scene.add(edge);
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 5), mat(0xf5f0e6));
+    edge.position.set(sx, 0, 0.01); g.add(edge);
   }
+  scene.add(g); roadSegs.push({ group: g, k });
 }
 // 車線の破線（2D版と同じく120刻み・長さ55で流す）
 const dashMeshes = [];
@@ -443,7 +526,16 @@ for (const bx of [-0.75, 0.75]) {
     scene.add(d); dashMeshes.push({ mesh: d, bx, k });
   }
 }
-// 遠景のパステルの家並み（静止したシルエット。視差は霧が柔らげる）
+// ---------- 路側の小石と草（2026-11-06 C回。スピード感の演出） ----------
+// 道のすぐ脇を流れる小物。速度が上がるほど近くを速く流れるのが目に入り、
+// 速さを伝える。100刻みで左右交互に置く。物理・しきい値には触れない。
+const edgeMeshes = [];
+for (let k = 0; k < 24; k++) {
+  const stone = k % 5 === 4
+    ? box(0.22, 0.22, 0.22, 0xe08a4a, 0, 0, 0)   // たまに橙の花の房
+    : box(0.2, 0.14, 0.2, 0xd8d2c4, 0, 0, 0);    // 白っぽい小石
+  scene.add(stone); edgeMeshes.push({ mesh: stone, k });
+}
 {
   const cols = [0xffd9d9, 0xfff0c2, 0xd9f2d9, 0xe3d7ff];
   for (let i = 0; i < 10; i++) {
@@ -727,18 +819,39 @@ let towerGroup, chokoMesh, plateMeshes = [], fallChokoMesh, fallPlateMesh, rider
 
 // ---------- 3D同期：ゲーム状態 → 3Dオブジェクト ----------
 function syncWorld() {
-  // 破線
+  const gy = slopeY(dist); // バイクのいる場所の地面の高さ。世界はこれを基準に持ち上がる
+  // 道路（区間ごとの板。坂の区間では傾きに合わせて持ち上がる）
+  const segBase = Math.floor(dist / 290) * 290;
+  for (const s of roadSegs) {
+    const D = segBase + (s.k - 2) * 290;
+    const rel = D - dist;
+    s.group.position.set(0, slopeY(D) - gy, -rel / UNIT);
+    s.group.rotation.x = -Math.PI / 2 + slopeDeriv(D) * UNIT;
+    s.group.visible = rel > -600 && rel < 5200;
+  }
+  // 破線（坂に沿って高さと傾きを合わせる）
   for (const d of dashMeshes) {
     const rel = (Math.floor(dist / 120) + d.k) * 120 - dist;
+    const D = dist + rel + 27;
     d.mesh.position.z = -(rel + 27) / UNIT;
+    d.mesh.position.y = slopeY(D) - gy + 0.012;
+    d.mesh.rotation.x = slopeDeriv(D) * UNIT;
     d.mesh.visible = rel < 2600;
+  }
+  // 路側の小石と草（道のすぐ脇を流れる。速さの目安）
+  for (const e of edgeMeshes) {
+    const D = (Math.floor(dist / 100) + e.k - 1) * 100;
+    const rel = D - dist;
+    const side = (e.k % 2 === 0) ? -1 : 1;
+    e.mesh.position.set(side * 3.05, slopeY(D) - gy + 0.08, -rel / UNIT);
+    e.mesh.visible = rel > -60 && rel < 2600;
   }
   // 路側の小物
   for (const p of propMeshes) {
     const idx = Math.floor(dist / 430) - 1 + p.k;
     const rel = idx * 430 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    p.mesh.position.set(side * 3.7, 0, -rel / UNIT);
+    p.mesh.position.set(side * 3.7, slopeY(idx * 430) - gy, -rel / UNIT);
     p.mesh.visible = rel > -150 && rel < 2600;
   }
   // 路側の家
@@ -746,47 +859,54 @@ function syncWorld() {
     const idx = Math.floor(dist / 690) - 1 + h.k;
     const rel = idx * 690 + 215 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    h.mesh.position.set(side * 6.6, 0, -rel / UNIT);
+    h.mesh.position.set(side * 6.6, slopeY(idx * 690 + 215) - gy, -rel / UNIT);
     h.mesh.visible = rel > -200 && rel < 2600;
   }
   // 松月庵（序盤・左側）
   shopGroup.position.z = -(200 - dist) / UNIT;
+  shopGroup.position.y = slopeY(200) - gy;
   shopGroup.visible = dist < 1600;
   // 鳥居チェックポイント（中間地点）
   const relCp = CHECK_X - dist;
   checkpointGroup.position.z = -relCp / UNIT;
+  checkpointGroup.position.y = slopeY(CHECK_X) - gy;
   checkpointGroup.visible = relCp > -120 && relCp < 2600;
   // 段差
   const relStep = STEP_X - dist;
   stepGroup.position.z = -relStep / UNIT;
+  stepGroup.position.y = slopeY(STEP_X) - gy;
+  stepGroup.rotation.x = slopeDeriv(STEP_X) * UNIT;
   stepGroup.visible = !stepDone && relStep > -80 && relStep < 2400;
   // ジャンプ台
   const relJump = JUMP_X - dist;
   jumpGroup.position.z = -relJump / UNIT;
+  jumpGroup.position.y = slopeY(JUMP_X) - gy;
+  jumpGroup.rotation.x = slopeDeriv(JUMP_X) * UNIT;
   jumpGroup.visible = !jumpDone && relJump > -80 && relJump < 2400;
   // 障害物（車線ごとに配置。通り過ぎたら隠す）
   for (const o of obstacleMeshes) {
     const rel = o.def.x - dist;
     o.mesh.position.z = -rel / UNIT;
+    o.mesh.position.y = slopeY(o.def.x) - gy;
     o.mesh.visible = rel > -80 && rel < 2400;
   }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
   if (state === "goal") relHouse = 620;
-  goalHouse.position.set(5.6, 0, -relHouse / UNIT);
+  goalHouse.position.set(5.6, slopeY(GOAL_DIST) - gy, -relHouse / UNIT);
   goalHouse.visible = relHouse > -200 && relHouse < 2600;
   // おばあちゃん（ゴール時のみ、家の前）
   grandma.visible = state === "goal";
-  if (grandma.visible) grandma.position.set(3.1, 0, -relHouse / UNIT + 2.6);
+  if (grandma.visible) grandma.position.set(3.1, slopeY(GOAL_DIST) - gy, -relHouse / UNIT + 2.6);
 
   // バイク（進路移動＋段差の跳ね＋走行の上下）
   const bikeX = laneX / UNIT * 1.03 - peekF * 0.9; // laneX(±90) → レーン幅(±1.55)
   const bob = Math.sin(t * 18) * (speed > 5 ? 0.025 : 0) + hop * 0.14;
-  bike.position.set(bikeX, bob + jumpY, 0);
+  bike.position.set(bikeX, gy + bob + jumpY, 0);
   // 地面の影はバイクと一緒に浮かせず、地面に残す（浮くほど小さく・薄く）
   if (groundShadow) {
     const shF = 1 / (1 + jumpY * 0.9);
-    groundShadow.position.set(bikeX, 0.015, 0);
+    groundShadow.position.set(bikeX, gy + 0.015, 0);
     groundShadow.scale.set(1.02 * shF, 1.18 * shF, 1);
     groundShadowMat.opacity = 0.25 * shF;
   }
@@ -834,11 +954,19 @@ function syncWorld() {
 
   // カメラ：バイクの後ろから前方。のぞくとカメラが横に寄り、塔が脇へずれて道が見える
   // 距離・高さ・注視点は fitViewport() が画角とともに向き対応した camParams を使う
+  // スピード感の演出（2026-11-06 C回。物理・数値には触れない）：
+  // 速度が上がるほど視野角が広がり（最大+7°）、カメラがわずかに後ろへ引く（最大+0.6）。
+  // 振動はごく小さく（±0.02）、塔の傾きの読み取りを邪魔しない程度に留める。
+  const speedF = Math.min(1, Math.max(0, speed / 195));
   const camX = bikeX * 0.55 + peekF * 1.5;
-  let cx = camX, cy = camParams.height + peekF * 0.35, cz = camParams.dist;
+  let cx = camX + Math.sin(t * 37) * 0.015 * speedF,
+      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.02 * speedF,
+      cz = camParams.dist + speedF * 0.6;
   if (shake > 0) { cx += (Math.random() - 0.5) * shake * 0.02; cy += (Math.random() - 0.5) * shake * 0.02; }
   camera.position.set(cx, cy, cz);
-  camera.lookAt(bikeX * 0.45 + peekF * 0.2, camParams.lookY, -12);
+  camera.lookAt(bikeX * 0.45 + peekF * 0.2, gy + camParams.lookY, -12);
+  camera.fov = camParams.fov + speedF * 7;
+  camera.updateProjectionMatrix();
 }
 
 // ---------- DOMオーバーレイ（HUD／タイトル／ゴール／失敗） ----------
@@ -869,7 +997,7 @@ function syncUI() {
     for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離
       if (!o.hit && dist < o.x) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - dist) / UNIT)) + "m"; break; }
     }
-    hudDist.textContent = "速度 " + Math.round(speed * 0.6) + (accel ? "・アクセル中" : "") + " / " + distText;
+    hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
   }
@@ -902,6 +1030,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - (frame.last || now)) / 1000 || 0.016); frame.last = now;
   update(dt);
+  engineUpdate(); // エンジン音と風の音を速度に合わせる（演出のみ）
   if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
   if (state === "fail") collapseT += dt;
@@ -917,7 +1046,7 @@ window.__demae = { start, changeLane,
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
   get obstacleHits() { return obstacleHits; },
-  get braking() { return braking; }, get accel() { return accel; }, keys };
+  get braking() { return braking; }, keys };
 addEventListener("resize", fitViewport);
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
 requestAnimationFrame(frame);
