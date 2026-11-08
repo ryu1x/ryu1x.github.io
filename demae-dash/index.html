@@ -106,9 +106,51 @@
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
+<script type="application/json" id="courseJson">{"centerline":[{"d":0,"x":0},{"d":1000,"x":0},{"d":1800,"x":-2.6},{"d":2600,"x":0},{"d":3400,"x":2.8},{"d":4400,"x":0},{"d":5800,"x":0}],"checkpoint":2900,"elevation":[{"d":0,"h":8},{"d":1200,"h":7},{"d":2600,"h":4},{"d":3800,"h":1.5},{"d":4600,"h":0},{"d":5800,"h":0}],"goalDist":5800,"jump":4600,"name":"コース初版 v1（山から海へ）","obstacles":[{"halfW":70,"lane":1,"type":"truck","x":1400},{"halfW":70,"lane":2,"type":"cones","x":2100},{"halfW":62,"lane":2,"type":"crates","x":3800},{"flag":true,"halfW":70,"lane":0,"type":"cones","x":5300}],"step":3200,"version":2}</script>
 <script type="module">
 import * as THREE from "three";
 "use strict";
+
+// ---------- コースデータ（JSON。course.json が正本で、ここには同じ内容を埋め込む） ----------
+// 編集は course-editor.html で行い、node sync-course.js で埋め込み直す。
+// ?course=local のときだけ、エディタが localStorage に置いた編集中コースを読む（試走用）。
+// 読み込みに失敗した場合は従来のコース（直線・上り坂つき）と同一の既定値を使う。
+const COURSE_DEFAULT = { goalDist: 5800, checkpoint: 2900, step: 3200, jump: 4600,
+  elevation: [{ d: 0, h: 0 }, { d: 800, h: 0 }, { d: 2600, h: 5 }, { d: 5800, h: 5 }],
+  centerline: [{ d: 0, x: 0 }, { d: 5800, x: 0 }],
+  obstacles: [
+    { x: 1400, lane: 1, halfW: 70, type: "truck" },
+    { x: 2100, lane: 2, halfW: 70, type: "cones" },
+    { x: 3800, lane: 2, halfW: 62, type: "crates" },
+    { x: 5300, lane: 0, halfW: 70, type: "cones", flag: true },
+  ] };
+function loadCourse() {
+  try {
+    if (new URLSearchParams(location.search).get("course") === "local") {
+      const raw = localStorage.getItem("demae-course-override");
+      if (raw) return JSON.parse(raw);
+    }
+  } catch (e) {}
+  try {
+    const el = document.getElementById("courseJson");
+    if (el && el.textContent.trim()) return JSON.parse(el.textContent);
+  } catch (e) { console.error("course JSON parse failed, using defaults", e); }
+  return COURSE_DEFAULT;
+}
+const COURSE = loadCourse();
+// 制御点の補間（標高・中心線とも同じ流儀：制御点間を smoothstep でつなぐ。
+// 旧 slopeY（800→2600 の smoothstep）は制御点 0,0 / 800,0 / 2600,5 / 5800,5 と一致する）
+function profileAt(pts, d, key) {
+  if (d <= pts[0].d) return pts[0][key];
+  for (let i = 1; i < pts.length; i++) {
+    if (d <= pts[i].d) {
+      const u = (d - pts[i - 1].d) / (pts[i].d - pts[i - 1].d);
+      const s = 3 * u * u - 2 * u * u * u;
+      return pts[i - 1][key] + (pts[i][key] - pts[i - 1][key]) * s;
+    }
+  }
+  return pts[pts.length - 1][key];
+}
 
 /* ================================================================
    出前ダッシュ!! 3D版 土台v1
@@ -131,7 +173,7 @@ let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェ
 let braking = false, peeking = false, peekF = 0;
 let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
 let goalT = 0, failMsg = "";
-const GOAL_DIST = 5800, CHECK_X = 2900, STEP_X = 3200, JUMP_X = 4600; // CHECK_X＝中間の鳥居チェックポイント（ゴールの中間。2026-11-05 ユーザー決定で企画書から復活）。全力で走って約40秒になるよう調整（第1週で実測）
+const GOAL_DIST = COURSE.goalDist, CHECK_X = COURSE.checkpoint, STEP_X = COURSE.step, JUMP_X = COURSE.jump; // コースJSONから読む（2026-11-08 C回にデータ化）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
 // ---------- 障害物（2026-11-05 ユーザー決定。進路変更を強いる。2026-11-05 C回で実装） ----------
 // 位置は鳥居(2900)・段差(3200)・ジャンプ台(4600)から離し、衝撃が重ならないようにする。
@@ -152,33 +194,32 @@ const UNIT = 58; // dist → 3Dユニット換算
 //   （柱3.6・白い旗）を立てて遠くから読めるようにした（2026-11-08 A回。見た目だけ）。
 // 抜けられるライン：左→中央→左→中央（自動走行Pで確認）。塔の物理の核・しきい値・
 // 鳥居／段差／ジャンプ台の位置は無変更。軽トラ（1400・中央）の位置も確定仕様のまま。
-const OBSTACLES = [
-  { x: 1400, lane: 1, halfW: 70, type: "truck", hit: false },  // 路駐の軽トラ（中央）
-  { x: 2100, lane: 2, halfW: 70, type: "cones", hit: false }, // 工事のコーンと看板（右・切り返し）
-  { x: 3800, lane: 2, halfW: 62, type: "crates", hit: false },// 店先のはみ出し荷物（右）
-  { x: 5300, lane: 0, halfW: 70, type: "cones", flag: true, hit: false }, // 工事のコーンと看板（左・ジャンプ後。着地から約2.9秒。遠方視認のため高い旗つき）
-];
+const OBSTACLES = COURSE.obstacles.map(o => ({ ...o, hit: false })); // コースJSONから読む（2026-11-08 C回にデータ化）
 let obstacleHits = 0;
 let hitJolt = 0; // 障害物に当たった瞬間の描画だけの揺れ（衝撃の見た目。物理のtheta・しきい値には触れない）
 
 // ---------- 上り坂（2026-11-06 C回。見た目だけの坂。物理・速度には触れない） ----------
 // チェイス視点で先の道が持ち上がって見え、軽トラ（1400・中央）が塔の裏に
-// 隠れにくくなるかの実験。区間 800→2600 でなめらかに 5 上がり、その先は
-// 台地（+5）のままゴールまで続く。最大勾配は約14°（港町の坂として自然な範囲）。
+// 隠れにくくなるかの実験。2026-11-08 C回にコースJSONへ切り出し（標高プロファイル）。
 // 速度への影響は入れない（意図的に。物理の聖域に触れず、自動走行の数値を
 // 変えずに「見え方だけ」の実験にするため）。坂の先に海が見下ろせる構図は、
 // 素材第3便の vista_sea_01（坂の上から見下ろす港町と海）と同じ約束。
-const SLOPE_START = 800, SLOPE_END = 2600, SLOPE_H = 5;
-function slopeY(d) { // コース距離 d における地面の高さ（3D単位）
-  if (d <= SLOPE_START) return 0;
-  if (d >= SLOPE_END) return SLOPE_H;
-  const u = (d - SLOPE_START) / (SLOPE_END - SLOPE_START);
-  return SLOPE_H * (3 * u * u - 2 * u * u * u); // smoothstep
+function slopeY(d) { // コース距離 d における地面の高さ（3D単位。コースJSONの標高プロファイル）
+  return profileAt(COURSE.elevation, d, "h");
 }
-function slopeDeriv(d) { // slopeY の d による微分（道路の傾き用）
-  if (d <= SLOPE_START || d >= SLOPE_END) return 0;
-  const u = (d - SLOPE_START) / (SLOPE_END - SLOPE_START);
-  return SLOPE_H * 6 * u * (1 - u) / (SLOPE_END - SLOPE_START);
+function slopeDeriv(d) { // slopeY の d による微分（道路の傾き用。数値微分で十分。見た目だけ）
+  const e = 20;
+  return (slopeY(d + e) - slopeY(d - e)) / (2 * e);
+}
+// ---------- 道の中心線（2026-11-08 C回。コースJSONの centerline。見た目だけ） ----------
+// 道が左右に曲がる。中心線の x は3D単位（道幅5.6に対し |x|≦4 程度が目安）。
+// バイク・道路・路側物・障害物・鳥居・段差・ジャンプ台・橋本さん宅は
+// すべて中心線に沿って横へずらす。車線（laneX）は中心線からの相対位置の
+// ままなので、塔の物理・当たり判定・自動走行の数値は変わらない。
+function centerX(d) { return profileAt(COURSE.centerline, d, "x"); }
+function centerDeriv(d) { // 中心線の傾き（3D単位/dist。道路の板のヨー角用）
+  const e = 20;
+  return (centerX(d + e) - centerX(d - e)) / (2 * e);
 }
 
 // ---------- 音（2D版のWebAudio合成を流用） ----------
@@ -837,7 +878,9 @@ function syncWorld() {
   for (const s of roadSegs) {
     const D = segBase + (s.k - 2) * 290;
     const rel = D - dist;
-    s.group.position.set(0, slopeY(D) - gy, -rel / UNIT);
+    s.group.position.set(centerX(D), slopeY(D) - gy, -rel / UNIT);
+    s.group.rotation.order = "YXZ"; // ヨー（曲がり）→ピッチ（坂）の順に回す
+    s.group.rotation.y = -Math.atan(centerDeriv(D) * UNIT);
     s.group.rotation.x = -Math.PI / 2 + slopeDeriv(D) * UNIT;
     s.group.visible = rel > -600 && rel < 5200;
   }
@@ -845,6 +888,7 @@ function syncWorld() {
   for (const d of dashMeshes) {
     const rel = (Math.floor(dist / 120) + d.k) * 120 - dist;
     const D = dist + rel + 27;
+    d.mesh.position.x = centerX(D);
     d.mesh.position.z = -(rel + 27) / UNIT;
     d.mesh.position.y = slopeY(D) - gy + 0.012;
     d.mesh.rotation.x = slopeDeriv(D) * UNIT;
@@ -855,7 +899,7 @@ function syncWorld() {
     const D = (Math.floor(dist / 100) + e.k - 1) * 100;
     const rel = D - dist;
     const side = (e.k % 2 === 0) ? -1 : 1;
-    e.mesh.position.set(side * 3.05, slopeY(D) - gy + 0.08, -rel / UNIT);
+    e.mesh.position.set(side * 3.05 + centerX(D), slopeY(D) - gy + 0.08, -rel / UNIT);
     e.mesh.visible = rel > -60 && rel < 2600;
   }
   // 路側の小物
@@ -863,7 +907,7 @@ function syncWorld() {
     const idx = Math.floor(dist / 430) - 1 + p.k;
     const rel = idx * 430 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    p.mesh.position.set(side * 3.7, slopeY(idx * 430) - gy, -rel / UNIT);
+    p.mesh.position.set(side * 3.7 + centerX(idx * 430), slopeY(idx * 430) - gy, -rel / UNIT);
     p.mesh.visible = rel > -150 && rel < 2600;
   }
   // 路側の家
@@ -871,33 +915,42 @@ function syncWorld() {
     const idx = Math.floor(dist / 690) - 1 + h.k;
     const rel = idx * 690 + 215 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    h.mesh.position.set(side * 6.6, slopeY(idx * 690 + 215) - gy, -rel / UNIT);
+    h.mesh.position.set(side * 6.6 + centerX(idx * 690 + 215), slopeY(idx * 690 + 215) - gy, -rel / UNIT);
     h.mesh.visible = rel > -200 && rel < 2600;
   }
   // 松月庵（序盤・左側）
+  shopGroup.position.x = -5.6 + centerX(200);
   shopGroup.position.z = -(200 - dist) / UNIT;
   shopGroup.position.y = slopeY(200) - gy;
   shopGroup.visible = dist < 1600;
   // 鳥居チェックポイント（中間地点）
   const relCp = CHECK_X - dist;
+  checkpointGroup.position.x = centerX(CHECK_X);
   checkpointGroup.position.z = -relCp / UNIT;
   checkpointGroup.position.y = slopeY(CHECK_X) - gy;
   checkpointGroup.visible = relCp > -120 && relCp < 2600;
   // 段差
   const relStep = STEP_X - dist;
+  stepGroup.position.x = centerX(STEP_X);
   stepGroup.position.z = -relStep / UNIT;
   stepGroup.position.y = slopeY(STEP_X) - gy;
+  stepGroup.rotation.order = "YXZ";
+  stepGroup.rotation.y = -Math.atan(centerDeriv(STEP_X) * UNIT);
   stepGroup.rotation.x = slopeDeriv(STEP_X) * UNIT;
   stepGroup.visible = !stepDone && relStep > -80 && relStep < 2400;
   // ジャンプ台
   const relJump = JUMP_X - dist;
+  jumpGroup.position.x = centerX(JUMP_X);
   jumpGroup.position.z = -relJump / UNIT;
   jumpGroup.position.y = slopeY(JUMP_X) - gy;
+  jumpGroup.rotation.order = "YXZ";
+  jumpGroup.rotation.y = -Math.atan(centerDeriv(JUMP_X) * UNIT);
   jumpGroup.rotation.x = slopeDeriv(JUMP_X) * UNIT;
   jumpGroup.visible = !jumpDone && relJump > -80 && relJump < 2400;
   // 障害物（車線ごとに配置。通り過ぎたら隠す）
   for (const o of obstacleMeshes) {
     const rel = o.def.x - dist;
+    o.mesh.position.x = centerX(o.def.x) + (o.def.lane - 1) * 90 / UNIT * 1.03;
     o.mesh.position.z = -rel / UNIT;
     o.mesh.position.y = slopeY(o.def.x) - gy;
     o.mesh.visible = rel > -80 && rel < 2400;
@@ -905,14 +958,14 @@ function syncWorld() {
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
   if (state === "goal") relHouse = 620;
-  goalHouse.position.set(5.6, slopeY(GOAL_DIST) - gy, -relHouse / UNIT);
+  goalHouse.position.set(5.6 + centerX(GOAL_DIST), slopeY(GOAL_DIST) - gy, -relHouse / UNIT);
   goalHouse.visible = relHouse > -200 && relHouse < 2600;
   // おばあちゃん（ゴール時のみ、家の前）
   grandma.visible = state === "goal";
-  if (grandma.visible) grandma.position.set(3.1, slopeY(GOAL_DIST) - gy, -relHouse / UNIT + 2.6);
+  if (grandma.visible) grandma.position.set(3.1 + centerX(GOAL_DIST), slopeY(GOAL_DIST) - gy, -relHouse / UNIT + 2.6);
 
-  // バイク（進路移動＋段差の跳ね＋走行の上下）
-  const bikeX = laneX / UNIT * 1.03 - peekF * 0.9; // laneX(±90) → レーン幅(±1.55)
+  // バイク（進路移動＋段差の跳ね＋走行の上下。道の中心線に沿って横へずれる）
+  const bikeX = centerX(dist) + laneX / UNIT * 1.03 - peekF * 0.9; // laneX(±90) → レーン幅(±1.55)
   const bob = Math.sin(t * 18) * (speed > 5 ? 0.025 : 0) + hop * 0.14;
   bike.position.set(bikeX, gy + bob + jumpY, 0);
   // 地面の影はバイクと一緒に浮かせず、地面に残す（浮くほど小さく・薄く）
@@ -976,7 +1029,8 @@ function syncWorld() {
       cz = camParams.dist + speedF * 0.6;
   if (shake > 0) { cx += (Math.random() - 0.5) * shake * 0.02; cy += (Math.random() - 0.5) * shake * 0.02; }
   camera.position.set(cx, cy, cz);
-  camera.lookAt(bikeX * 0.45 + peekF * 0.2, gy + camParams.lookY, -12);
+  // カーブの先へ視線を少し寄せる（道が曲がる先を読むため。中心線の700先との差の半分）
+  camera.lookAt(bikeX * 0.45 + peekF * 0.2 + (centerX(dist + 700) - centerX(dist)) * 0.5, gy + camParams.lookY, -12);
   camera.fov = camParams.fov + speedF * 7;
   camera.updateProjectionMatrix();
 }
@@ -1058,7 +1112,8 @@ window.__demae = { start, changeLane,
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
   get obstacleHits() { return obstacleHits; },
-  get braking() { return braking; }, keys };
+  get braking() { return braking; }, keys,
+  get course() { return COURSE; } };
 addEventListener("resize", fitViewport);
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
 requestAnimationFrame(frame);
