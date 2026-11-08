@@ -888,7 +888,7 @@ function syncWorld() {
   for (const d of dashMeshes) {
     const rel = (Math.floor(dist / 120) + d.k) * 120 - dist;
     const D = dist + rel + 27;
-    d.mesh.position.x = centerX(D);
+    d.mesh.position.x = centerX(D) + d.bx; // 車線の左右2本（bx=±0.75）を中心線に沿わせる。中心線だけだと2本が中央に重なる
     d.mesh.position.z = -(rel + 27) / UNIT;
     d.mesh.position.y = slopeY(D) - gy + 0.012;
     d.mesh.rotation.x = slopeDeriv(D) * UNIT;
