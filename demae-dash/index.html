@@ -543,9 +543,11 @@ function buildVespa() {
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(90, 260), mat(0x2e86c1));
   sea.rotation.x = -Math.PI / 2; sea.position.set(-52, -0.05, -60); scene.add(sea);
 }
-{ // 地面（砂色）
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 280), mat(0xe8d9b0));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(0, -0.02, -60); scene.add(ground);
+{ // 地面（砂色。海の左側は空けておく。2026-11-08 C回：従来は幅240で中央にあり、
+  // 海（x -97〜-7）の全面を覆い隠していたため、山から海が見えなかった。
+  // 幅160・中心x+50（-30〜130）に寄せ、海側を開ける。道・家・店は範囲内に収まる）
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 280), mat(0xe8d9b0));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(50, -0.02, -60); scene.add(ground);
 }
 // ---------- 道路（区間ごとに分けた板。上り坂に沿って持ち上がる。2026-11-06 C回） ----------
 // 1枚の長い平面では坂に沿えないため、5単位（290）ごとの板に分ける。
@@ -872,13 +874,18 @@ let towerGroup, chokoMesh, plateMeshes = [], fallChokoMesh, fallPlateMesh, rider
 
 // ---------- 3D同期：ゲーム状態 → 3Dオブジェクト ----------
 function syncWorld() {
-  const gy = slopeY(dist); // バイクのいる場所の地面の高さ。世界はこれを基準に持ち上がる
+  const gy = slopeY(dist); // バイクのいる場所の地面の高さ（絶対高さ。バイク・カメラ・影はこの高さに置く。
+  // 世界の物（道路・小物・障害物・鳥居・段差・ジャンプ台・橋本さん宅）も同じ絶対高さ slopeY() で置く。
+  // 2026-11-08 C回の修正：従来は世界の物を slopeY(D) - gy（バイク基準の相対高さ）で置いていたため、
+  // バイクが道路から gy だけ浮いていた。標高0の区間では gy=0 で気づかず、11/06の坂（最大5）でも
+  // 背の高い目印だけが見えて見逃されていた。v1の山スタート（gy=8）で道路が画面下にはみ出し、
+  // 前半は道路が全く見えない状態になっていた。絶対高さに統一することでバイクは道路の上に立つ）
   // 道路（区間ごとの板。坂の区間では傾きに合わせて持ち上がる）
   const segBase = Math.floor(dist / 290) * 290;
   for (const s of roadSegs) {
     const D = segBase + (s.k - 2) * 290;
     const rel = D - dist;
-    s.group.position.set(centerX(D), slopeY(D) - gy, -rel / UNIT);
+    s.group.position.set(centerX(D), slopeY(D), -rel / UNIT);
     s.group.rotation.order = "YXZ"; // ヨー（曲がり）→ピッチ（坂）の順に回す
     s.group.rotation.y = -Math.atan(centerDeriv(D) * UNIT);
     s.group.rotation.x = -Math.PI / 2 + slopeDeriv(D) * UNIT;
@@ -890,7 +897,7 @@ function syncWorld() {
     const D = dist + rel + 27;
     d.mesh.position.x = centerX(D) + d.bx; // 車線の左右2本（bx=±0.75）を中心線に沿わせる。中心線だけだと2本が中央に重なる
     d.mesh.position.z = -(rel + 27) / UNIT;
-    d.mesh.position.y = slopeY(D) - gy + 0.012;
+    d.mesh.position.y = slopeY(D) + 0.012;
     d.mesh.rotation.x = slopeDeriv(D) * UNIT;
     d.mesh.visible = rel < 2600;
   }
@@ -899,7 +906,7 @@ function syncWorld() {
     const D = (Math.floor(dist / 100) + e.k - 1) * 100;
     const rel = D - dist;
     const side = (e.k % 2 === 0) ? -1 : 1;
-    e.mesh.position.set(side * 3.05 + centerX(D), slopeY(D) - gy + 0.08, -rel / UNIT);
+    e.mesh.position.set(side * 3.05 + centerX(D), slopeY(D) + 0.08, -rel / UNIT);
     e.mesh.visible = rel > -60 && rel < 2600;
   }
   // 路側の小物
@@ -907,7 +914,7 @@ function syncWorld() {
     const idx = Math.floor(dist / 430) - 1 + p.k;
     const rel = idx * 430 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    p.mesh.position.set(side * 3.7 + centerX(idx * 430), slopeY(idx * 430) - gy, -rel / UNIT);
+    p.mesh.position.set(side * 3.7 + centerX(idx * 430), slopeY(idx * 430), -rel / UNIT);
     p.mesh.visible = rel > -150 && rel < 2600;
   }
   // 路側の家
@@ -915,25 +922,25 @@ function syncWorld() {
     const idx = Math.floor(dist / 690) - 1 + h.k;
     const rel = idx * 690 + 215 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
-    h.mesh.position.set(side * 6.6 + centerX(idx * 690 + 215), slopeY(idx * 690 + 215) - gy, -rel / UNIT);
+    h.mesh.position.set(side * 6.6 + centerX(idx * 690 + 215), slopeY(idx * 690 + 215), -rel / UNIT);
     h.mesh.visible = rel > -200 && rel < 2600;
   }
   // 松月庵（序盤・左側）
   shopGroup.position.x = -5.6 + centerX(200);
   shopGroup.position.z = -(200 - dist) / UNIT;
-  shopGroup.position.y = slopeY(200) - gy;
+  shopGroup.position.y = slopeY(200);
   shopGroup.visible = dist < 1600;
   // 鳥居チェックポイント（中間地点）
   const relCp = CHECK_X - dist;
   checkpointGroup.position.x = centerX(CHECK_X);
   checkpointGroup.position.z = -relCp / UNIT;
-  checkpointGroup.position.y = slopeY(CHECK_X) - gy;
+  checkpointGroup.position.y = slopeY(CHECK_X);
   checkpointGroup.visible = relCp > -120 && relCp < 2600;
   // 段差
   const relStep = STEP_X - dist;
   stepGroup.position.x = centerX(STEP_X);
   stepGroup.position.z = -relStep / UNIT;
-  stepGroup.position.y = slopeY(STEP_X) - gy;
+  stepGroup.position.y = slopeY(STEP_X);
   stepGroup.rotation.order = "YXZ";
   stepGroup.rotation.y = -Math.atan(centerDeriv(STEP_X) * UNIT);
   stepGroup.rotation.x = slopeDeriv(STEP_X) * UNIT;
@@ -942,7 +949,7 @@ function syncWorld() {
   const relJump = JUMP_X - dist;
   jumpGroup.position.x = centerX(JUMP_X);
   jumpGroup.position.z = -relJump / UNIT;
-  jumpGroup.position.y = slopeY(JUMP_X) - gy;
+  jumpGroup.position.y = slopeY(JUMP_X);
   jumpGroup.rotation.order = "YXZ";
   jumpGroup.rotation.y = -Math.atan(centerDeriv(JUMP_X) * UNIT);
   jumpGroup.rotation.x = slopeDeriv(JUMP_X) * UNIT;
@@ -952,17 +959,17 @@ function syncWorld() {
     const rel = o.def.x - dist;
     o.mesh.position.x = centerX(o.def.x) + (o.def.lane - 1) * 90 / UNIT * 1.03;
     o.mesh.position.z = -rel / UNIT;
-    o.mesh.position.y = slopeY(o.def.x) - gy;
+    o.mesh.position.y = slopeY(o.def.x);
     o.mesh.visible = rel > -80 && rel < 2400;
   }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
   if (state === "goal") relHouse = 620;
-  goalHouse.position.set(5.6 + centerX(GOAL_DIST), slopeY(GOAL_DIST) - gy, -relHouse / UNIT);
+  goalHouse.position.set(5.6 + centerX(GOAL_DIST), slopeY(GOAL_DIST), -relHouse / UNIT);
   goalHouse.visible = relHouse > -200 && relHouse < 2600;
   // おばあちゃん（ゴール時のみ、家の前）
   grandma.visible = state === "goal";
-  if (grandma.visible) grandma.position.set(3.1 + centerX(GOAL_DIST), slopeY(GOAL_DIST) - gy, -relHouse / UNIT + 2.6);
+  if (grandma.visible) grandma.position.set(3.1 + centerX(GOAL_DIST), slopeY(GOAL_DIST), -relHouse / UNIT + 2.6);
 
   // バイク（進路移動＋段差の跳ね＋走行の上下。道の中心線に沿って横へずれる）
   const bikeX = centerX(dist) + laneX / UNIT * 1.03 - peekF * 0.9; // laneX(±90) → レーン幅(±1.55)
