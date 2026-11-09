@@ -169,6 +169,7 @@ let plates = 5, choko = true;  // 残りざる枚数／猪口あり
 let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
+let camGy = null; // カメラの高さのもとになる地面の高さ。バイクの高さ gy をゆっくり追う（下りの読み方の実験。2026-11-09 B回）。
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
 let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
@@ -320,6 +321,7 @@ function start() {
   chokoFall = -1; slipFall = -1; collapseT = -1; invuln = 0; shake = 0; hop = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
+  camGy = slopeY(0); // カメラの高さはスタート地点から（走り出しで下から追い上げない）
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
   engineStart(); // エンジン音と風の音を始める（タイトル・ゴール・失敗時は無音）
 }
@@ -399,14 +401,17 @@ function update(dt) {
   // ジャンプ中の飛行と着地：飛ぶ距離と着地の衝撃は離陸時の速度で決まる。
   // 着地だけでは崩壊しない（きれいに速く飛んでも傾きのピークは約0.25で、
   // 猪口のしきい値0.30には届かず、警告の「カタカタ」範囲に収まる設計。
-  // 遅く飛べばピークは約0.15まで小さくなる。傾きのピークは角速度の
-  // 約0.107倍という、この塔のバネ・減衰の実測換算で決めた）。
-  // 着地の衝撃は角速度として加え、傾きが育ってから3段階の判定にかかる。
-  // すでに傾いている状態で飛ぶと、着地で滑落・崩壊に進むこともある（3段階の範囲内）。
+  // 2026-11-09 B回：自動加速で離陸速度が184前後になりピークが0.28〜0.29まで
+  // 寄っていたため、着地の衝撃の式を 0.8+速度×0.010 → 0.9+速度×0.0075 に
+  // 調整し、きれいな着地のピークを約0.24〜0.25に戻した（猪口まで約0.05の余裕）。
+  // ブレーキで遅く飛んだときのピークは約0.20で、カタカタ（0.18超）は鳴る。
+  // 塔のバネ・減衰・しきい値・失敗3段階は無変更。着地の衝撃は角速度として加え、
+  // 傾きが育ってから3段階の判定にかかる。すでに傾いている状態で飛ぶと、
+  // 着地で滑落・崩壊に進むこともある（3段階の範囲内）。
   if (airT >= 0) {
     airT += dt;
     jumpY = Math.sin(Math.PI * Math.min(1, airT / airDur)) * (0.35 + jumpSpeed * 0.002);
-    if (airT >= airDur) { airT = -1; jumpY = 0; omega += 0.8 + jumpSpeed * 0.010; hop = Math.max(hop, 0.6); noiseBurst(0.15, 0.15, 700); }
+    if (airT >= airDur) { airT = -1; jumpY = 0; omega += 0.9 + jumpSpeed * 0.0075; hop = Math.max(hop, 0.6); noiseBurst(0.15, 0.15, 700); }
   }
 
   if (invuln > 0) invuln -= dt;
@@ -897,8 +902,14 @@ let towerGroup, chokoMesh, plateMeshes = [], fallChokoMesh, fallPlateMesh, rider
 }
 
 // ---------- 3D同期：ゲーム状態 → 3Dオブジェクト ----------
-function syncWorld() {
+function syncWorld(dt) {
   const gy = slopeY(dist); // バイクのいる場所の地面の高さ（絶対高さ。バイク・カメラ・影はこの高さに置く。
+  // 下りの読み方（2026-11-09 B回・描画だけ）：カメラの高さはバイクの地面の高さ
+  // をゆっくり追う（時定数 約0.8秒）。下りではカメラが少し高い位置に残り、
+  // 注視点（バイクの高さ）とのあいだに下向きの傾きがつくので、前方の道が
+  // 下がっていくのが読める。バイク・影・注視点は gy のままで変わらない。
+  if (camGy === null) camGy = gy;
+  camGy += (gy - camGy) * Math.min(1, dt * 1.2);
   // 世界の物（道路・小物・障害物・鳥居・段差・ジャンプ台・橋本さん宅）も同じ絶対高さ slopeY() で置く。
   // 2026-11-08 C回の修正：従来は世界の物を slopeY(D) - gy（バイク基準の相対高さ）で置いていたため、
   // バイクが道路から gy だけ浮いていた。標高0の区間では gy=0 で気づかず、11/06の坂（最大5）でも
@@ -1051,7 +1062,7 @@ function syncWorld() {
   const speedF = Math.min(1, Math.max(0, speed / 195));
   const camX = bikeX * 0.55 + peekF * 1.5;
   let cx = camX + Math.sin(t * 37) * 0.015 * speedF,
-      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.02 * speedF,
+      cy = camGy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.02 * speedF,
       cz = camParams.dist + speedF * 0.6;
   if (shake > 0) { cx += (Math.random() - 0.5) * shake * 0.02; cy += (Math.random() - 0.5) * shake * 0.02; }
   camera.position.set(cx, cy, cz);
@@ -1126,7 +1137,7 @@ function frame(now) {
   if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
   if (state === "fail") collapseT += dt;
-  syncWorld();
+  syncWorld(dt);
   syncUI();
   renderer.render(scene, camera);
 }
