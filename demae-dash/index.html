@@ -549,25 +549,49 @@ function buildVespa() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 280), mat(0xe8d9b0));
   ground.rotation.x = -Math.PI / 2; ground.position.set(50, -0.02, -60); scene.add(ground);
 }
-// ---------- 道路（区間ごとに分けた板。上り坂に沿って持ち上がる。2026-11-06 C回） ----------
-// 1枚の長い平面では坂に沿えないため、5単位（290）ごとの板に分ける。
-// 板はその区間の地面の高さと傾きに合わせる。継ぎ目は勾配の変化が
-// ゆっくりなので、ほとんど目立たない。白線は板の子として一緒に傾く。
-const roadSegs = [];
-for (let k = 0; k < 20; k++) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.PlaneGeometry(5.6, 5), mat(0x8d8d8d)));
-  for (const sx of [-2.75, 2.75]) {
-    const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 5), mat(0xf5f0e6));
-    edge.position.set(sx, 0, 0.01); g.add(edge);
+// ---------- 道路（中心線に沿った1枚の帯。2026-11-09 A回） ----------
+// 2026-11-08のユーザー指摘「カーブの道路、破れたみたいになってるね」の修正。
+// 従来は5単位（290）ごとの板20枚を、それぞれ中心線の傾きで回して並べていた。
+// カーブでは隣の板のヨー角が変わるため、継ぎ目で板の端がずれ、道路の端で
+// 最大1単位（58コース単位）もの楔形の隙間ができ、その下の砂色の地面が
+// 見えて「破れた」ように見えていた（直線区間では隙間はほぼ0）。
+// 対策：道路をコース全体の1枚の帯（リボン）にし、頂点を中心線そのものに
+// 置く。継ぎ目がなくなるので破れは原理的に起きない。白い縁取りも同じ
+// 作りの細い帯にする。帯はコース座標で作り、毎フレーム dist/UNIT だけ
+// z方向へずらす（他の物と同じスクロールの流儀）。物理・コースデータは無変更。
+function makeRibbon(halfW, yOff, color, centerOff) {
+  const positions = [], indices = [];
+  const dFrom = -600, dTo = 6400, step = 145; // スタート手前600〜ゴール先600まで覆う
+  let n = 0;
+  for (let D = dFrom; D <= dTo; D += step) {
+    const psi = -Math.atan(centerDeriv(D) * UNIT); // 道路の向き
+    const cx = Math.cos(psi), sx = Math.sin(psi); // 幅方向 (cosψ, 0, -sinψ)
+    const y = slopeY(D) + yOff, z = -D / UNIT, x0 = centerX(D);
+    const l0 = (centerOff || 0) - halfW, l1 = (centerOff || 0) + halfW;
+    positions.push(x0 + l0 * cx, y, z - l0 * sx, x0 + l1 * cx, y, z - l1 * sx);
+    if (n > 0) {
+      const a = (n - 1) * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    n++;
   }
-  scene.add(g); roadSegs.push({ group: g, k });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat(color));
+  scene.add(mesh);
+  return mesh;
 }
+const roadMesh = makeRibbon(2.8, 0, 0x8d8d8d, 0); // 道路本体（幅5.6。従来の板と同じ幅）
+const roadEdgeL = makeRibbon(0.07, 0.01, 0xf5f0e6, -2.75); // 左の白い縁取り
+const roadEdgeR = makeRibbon(0.07, 0.01, 0xf5f0e6, 2.75); // 右の白い縁取り
 // 車線の破線（2D版と同じく120刻み・長さ55で流す）
 const dashMeshes = [];
 for (const bx of [-0.75, 0.75]) {
   for (let k = 0; k < 26; k++) {
     const d = box(0.12, 0.02, 55 / UNIT, 0xf5f0e6, bx, 0.012, 0);
+    d.rotation.order = "YXZ"; // ヨー（曲がり）→ピッチ（坂）の順。2026-11-09 A回：カーブで破線も道に沿うように
     scene.add(d); dashMeshes.push({ mesh: d, bx, k });
   }
 }
@@ -880,17 +904,11 @@ function syncWorld() {
   // バイクが道路から gy だけ浮いていた。標高0の区間では gy=0 で気づかず、11/06の坂（最大5）でも
   // 背の高い目印だけが見えて見逃されていた。v1の山スタート（gy=8）で道路が画面下にはみ出し、
   // 前半は道路が全く見えない状態になっていた。絶対高さに統一することでバイクは道路の上に立つ）
-  // 道路（区間ごとの板。坂の区間では傾きに合わせて持ち上がる）
-  const segBase = Math.floor(dist / 290) * 290;
-  for (const s of roadSegs) {
-    const D = segBase + (s.k - 2) * 290;
-    const rel = D - dist;
-    s.group.position.set(centerX(D), slopeY(D), -rel / UNIT);
-    s.group.rotation.order = "YXZ"; // ヨー（曲がり）→ピッチ（坂）の順に回す
-    s.group.rotation.y = -Math.atan(centerDeriv(D) * UNIT);
-    s.group.rotation.x = -Math.PI / 2 + slopeDeriv(D) * UNIT;
-    s.group.visible = rel > -600 && rel < 5200;
-  }
+  // 道路（中心線に沿った1枚の帯。コース座標で作り、dist だけ z へずらす。
+  // 2026-11-09 A回：板20枚→帯1枚に変更し、カーブの継ぎ目の破れをなくした）
+  roadMesh.position.z = dist / UNIT;
+  roadEdgeL.position.z = dist / UNIT;
+  roadEdgeR.position.z = dist / UNIT;
   // 破線（坂に沿って高さと傾きを合わせる）
   for (const d of dashMeshes) {
     const rel = (Math.floor(dist / 120) + d.k) * 120 - dist;
@@ -898,6 +916,7 @@ function syncWorld() {
     d.mesh.position.x = centerX(D) + d.bx; // 車線の左右2本（bx=±0.75）を中心線に沿わせる。中心線だけだと2本が中央に重なる
     d.mesh.position.z = -(rel + 27) / UNIT;
     d.mesh.position.y = slopeY(D) + 0.012;
+    d.mesh.rotation.y = -Math.atan(centerDeriv(D) * UNIT); // カーブで破線も道の向きに合わせる（2026-11-09 A回）
     d.mesh.rotation.x = slopeDeriv(D) * UNIT;
     d.mesh.visible = rel < 2600;
   }
