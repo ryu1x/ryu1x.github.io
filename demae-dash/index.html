@@ -1072,10 +1072,14 @@ function syncWorld() {
   }
   // 海辺の灯台（海面＝絶対高さ0に立つ。バイクと一緒に下がらないのが要点。
   // y には slopeY を足さないこと。ゴール手前の海に置く）
+  // 表示範囲はコース全体（6400先まで）。遠くの目印としてスタート時から
+  // 見えていることが要点で、表示を中盤までに絞ると「下るほど頭が上がって
+  // 見える」効果が出ない（2026-11-10 A回：2600までに絞っていた版では
+  // 20秒ごろまで全く見えず、現れるときはすでに大きい塔だったため）。
   {
     const relLh = LIGHTHOUSE_D - dist;
     lighthouseGroup.position.set(LIGHTHOUSE_X + centerX(LIGHTHOUSE_D), 0, -relLh / UNIT);
-    lighthouseGroup.visible = relLh > -100 && relLh < 2600;
+    lighthouseGroup.visible = relLh > -100 && relLh < 6400;
   }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
