@@ -849,10 +849,11 @@ for (const s of SIGN_DEFS) {
 // 灯台の頭が視界の低い位置に見え、海辺へ下るほど頭が上がって見える。
 // 道路は下るのに灯台は動かない、という対比そのものが下りの証拠になる。
 // 見た目だけの変更で、位置・当たり判定・塔の物理・コースデータには触れない。
-const LIGHTHOUSE_D = 5600, LIGHTHOUSE_X = -34; // 海の中（海はx -97〜-7）。ゴール手前
+const LIGHTHOUSE_D = 5600, LIGHTHOUSE_X = -14; // 海辺（海はx -97〜-7だが、地面がx -30〜130を覆うため
+// x=-14の足元は砂浜に見える。岩場を敷いて海岸の灯台として立てる）
 const lighthouseGroup = new THREE.Group();
 {
-  lighthouseGroup.add(cyl(2.4, 3.0, 1.0, 0x8a8a7a, 0, 0.3, 0, 12)); // 海に浮く岩場（海面より少し上）
+  lighthouseGroup.add(cyl(2.4, 3.0, 1.0, 0x8a8a7a, 0, 0.3, 0, 12)); // 海岸の岩場（海面より少し上）
   const bands = [0xc0392b, 0xf5f0e6, 0xc0392b, 0xf5f0e6, 0xc0392b]; // 赤白の縞の塔（高さ約11）
   for (let i = 0; i < 5; i++) lighthouseGroup.add(cyl(1.05, 1.15, 2.2, bands[i], 0, 1.8 + i * 2.2, 0, 12));
   lighthouseGroup.add(cyl(1.35, 1.35, 0.5, 0x333333, 0, 12.0, 0, 12)); // 見張り台
