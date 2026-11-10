@@ -50,7 +50,8 @@
   #bBrake { font-size:23px; padding:18px 30px; background:#ffe1a8; }
   #pad button:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
   #pad button.hold { background:#ffd166; }
-  #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px; }
+  #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px;
+    max-width:960px; line-height:1.6; word-break:keep-all; }
   /* 縦画面（アスペクト比1未満）：ゲーム画面を縦に大きく取り、文字・ボタンを収める */
   @media (max-aspect-ratio: 1/1) {
     #gl { width:100vw; height:66vh; max-height:none; aspect-ratio:auto; border-radius:0; }
@@ -97,7 +98,7 @@
       <button id="bBrake">ブレーキ（長押し）</button>
     </div>
   </div>
-  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
+  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
