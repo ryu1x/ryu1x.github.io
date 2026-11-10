@@ -42,7 +42,7 @@
     padding:10px 18px; font-size:22px; font-weight:bold; display:none; }
   /* 2026-11-07 操作系の刷新（アクセル自動化・マリオカート式）：ボタンは進路・ブレーキ・のぞくの最小限に。
      進路は左手側、ブレーキは右手の親指に届く右下に大きく。のぞくはブレーキの隣に小さく。 */
-  #pad { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:space-between;
+  #pad { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:flex-end;
     width:100%; max-width:960px; padding:0 8px; box-sizing:border-box; }
   .padGroup { display:flex; gap:10px; align-items:center; }
   #pad button { font-size:20px; padding:14px 20px; border-radius:999px; border:0;
@@ -93,15 +93,11 @@
   </div>
   <div id="pad">
     <div class="padGroup">
-      <button id="bLeft">◀ 進路</button>
-      <button id="bRight">進路 ▶</button>
-    </div>
-    <div class="padGroup">
       <button id="bPeek">のぞく（長押し）</button>
       <button id="bBrake">ブレーキ（長押し）</button>
     </div>
   </div>
-  <div id="hint">キーボード：←→＝進路変更／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
+  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦　｜　速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -162,7 +158,7 @@ function profileAt(pts, d, key) {
 
 // ---------- 状態（2D版と同一） ----------
 let state = "title"; // title | play | goal | fail
-let t = 0, dist = 0, speed = 0, lane = 1, laneX = 0; // lane: 0,1,2
+let t = 0, dist = 0, speed = 0, laneX = 0, steerTarget = 0; // 横位置は連続値（車線スナップなし）。steerTarget はドラッグ／キーで動かす目標位置（±140まで。車線中心は ±90）
 let theta = 0, omega = 0;      // 塔の傾き（前＋／後−）と角速度
 let sway = 0, swayV = 0;       // 横方向の揺れ（進路変更で生まれる）
 let plates = 5, choko = true;  // 残りざる枚数／猪口あり
@@ -171,7 +167,7 @@ let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
-let btnBrake = false, btnPeek = false, touchBrake = false; // 入力ソース別（毎フレーム合成する）
+let btnBrake = false, btnPeek = false; // 入力ソース別（毎フレーム合成する）
 let goalT = 0, failMsg = "";
 const GOAL_DIST = COURSE.goalDist, CHECK_X = COURSE.checkpoint, STEP_X = COURSE.step, JUMP_X = COURSE.jump; // コースJSONから読む（2026-11-08 C回にデータ化）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
@@ -278,8 +274,7 @@ const keys = {};
 addEventListener("keydown", e => {
   if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
-  if (e.code === "ArrowLeft") changeLane(-1);
-  if (e.code === "ArrowRight") changeLane(1);
+  // ←→は押しっぱなしで滑らかに切れる（目標位置を update() で動かす）。離散の進路変更は廃止。
   if (e.code === "Enter" || e.code === "Space") { if (state === "title" || state === "goal" || state === "fail") start(); }
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
@@ -291,31 +286,39 @@ function holdBtn(el, on, off) {
 }
 holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake = false);
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
-document.getElementById("bLeft").addEventListener("click", () => { ac(); changeLane(-1); });
-document.getElementById("bRight").addEventListener("click", () => { ac(); changeLane(1); });
-// フリック：左右のスワイプで進路変更／画面長押し（動かさず保持）でブレーキ
-let tx = null, ty = null, touchT = 0, touchActive = false, touchMoved = false;
-glEl.addEventListener("touchstart", e => { const p = e.touches[0]; tx = p.clientX; ty = p.clientY;
-  touchT = performance.now(); touchActive = true; touchMoved = false; ac(); }, {passive:true});
-glEl.addEventListener("touchmove", e => { if (tx === null) return; const p = e.touches[0];
-  if (Math.abs(p.clientX - tx) > 24 || Math.abs(p.clientY - ty) > 24) { touchMoved = true; touchBrake = false; } }, {passive:true});
-glEl.addEventListener("touchend", e => {
-  touchActive = false; touchBrake = false;
-  if (tx === null) return; const p = e.changedTouches[0], dx = p.clientX - tx, dy = p.clientY - ty;
-  if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) changeLane(dx > 0 ? 1 : -1);
-  if (state === "title" || state === "goal" || state === "fail") start();
-  tx = null;
-}, {passive:true});
-glEl.addEventListener("touchcancel", () => { touchActive = false; touchBrake = false; tx = null; }, {passive:true});
+// ---------- ハンドルのドラッグ操作（2026-11-10 ユーザー指示。マリオカートツアー式） ----------
+// 相対ドラッグ：指を置いた場所が起点で、そこからの水平の動きでハンドルが切れる。
+// 横位置は車線スナップなしの連続値。指を離したらハンドルは真っ直ぐ側へ戻る
+// （横の速度は収まる）が、横位置そのものは自動で中央へは戻さない。
+// ドラッグ120px＝車線1つ分（90）。◀▶ボタンとフリック進路変更は廃止。
+// 画面長押し＝ブレーキも廃止（ドラッグと競合するため。ブレーキは右下の大きなボタンで）。
+// マルチタッチ：ドラッグ中は最初の指だけを追い、2本目の指は無視する。
+// ブレーキ／のぞくは別要素のボタンなので、ドラッグしながらの同時押しができる。
+const DRAG_PX_PER_LANE = 120, LANE_W = 90, STEER_LIMIT = 140; // ±140まで（道幅いっぱい。車線中心は±90）
+let dragId = null, dragStartX = 0, dragStartTarget = 0;
+glEl.addEventListener("pointerdown", e => {
+  if (state !== "play" || dragId !== null) return;
+  dragId = e.pointerId; dragStartX = e.clientX; dragStartTarget = steerTarget;
+  try { glEl.setPointerCapture(e.pointerId); } catch (err) {}
+  ac();
+});
+glEl.addEventListener("pointermove", e => {
+  if (e.pointerId !== dragId) return;
+  steerTarget = Math.max(-STEER_LIMIT, Math.min(STEER_LIMIT,
+    dragStartTarget + (e.clientX - dragStartX) * LANE_W / DRAG_PX_PER_LANE));
+});
+function endDrag(e) { if (e.pointerId === dragId) dragId = null; }
+glEl.addEventListener("pointerup", endDrag);
+glEl.addEventListener("pointercancel", endDrag);
 glEl.addEventListener("click", () => { ac(); if (state !== "play") start(); });
-
-function changeLane(d) {
+// 自動走行・開発用：ハンドルの目標位置を直接置く（ドラッグで目標位置まで動かすのと同じ）。
+// 旧 changeLane（1車線ずつの離散変更）の置き換え。位置は連続値で、±140まで。
+function steerTo(x) {
   if (state !== "play") return;
-  const nl = Math.min(2, Math.max(0, lane + d));
-  if (nl !== lane) { lane = nl; swayV += d * 2.2; } // 進路変更そのものが揺れを生む
+  steerTarget = Math.max(-STEER_LIMIT, Math.min(STEER_LIMIT, x));
 }
 function start() {
-  state = "play"; t = 0; dist = 0; speed = 0; lane = 1; laneX = 0;
+  state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
   chokoFall = -1; slipFall = -1; collapseT = -1; invuln = 0; shake = 0; hop = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
@@ -328,8 +331,7 @@ function start() {
 function update(dt) {
   if (state !== "play") return;
   t += dt;
-  if (touchActive && !touchMoved && performance.now() - touchT > 150) touchBrake = true;
-  braking = btnBrake || touchBrake || !!keys["Space"];
+  braking = btnBrake || !!keys["Space"];
   peeking = btnPeek || !!keys["KeyP"];
   peekF += ((peeking ? 1 : 0) - peekF) * Math.min(1, dt * 8);
   const slowF = slowT > 0 ? 0.6 : 1; if (slowT > 0) slowT -= dt;
@@ -351,8 +353,14 @@ function update(dt) {
   // ジャンプ台（地形。段差の発展としてゴール手前に1つ置く。ボタンジャンプではない）
   if (!jumpDone && airT < 0 && dist >= JUMP_X) { jumpDone = true; airT = 0; airDur = 0.45 + speed * 0.0025; jumpSpeed = speed; }
 
+  // ハンドル（ドラッグ／キー）：キーを押しっぱなしにしている間は目標位置が滑らかに動く
+  // （1秒で200＝車線2つ分強。指を離したときと同様、横位置は中央へ自動では戻らない）。
+  // ドラッグ中は pointermove が目標位置を直接動かす。どちらも同じ steerTarget を使う。
+  if (keys["ArrowLeft"]) steerTarget = Math.max(-STEER_LIMIT, steerTarget - 200 * dt);
+  if (keys["ArrowRight"]) steerTarget = Math.min(STEER_LIMIT, steerTarget + 200 * dt);
+
   // 車線のなめらかな移動（横方向の加速度が揺れになる）
-  const targetX = (lane - 1) * 90;
+  const targetX = steerTarget;
   const prevX = laneX;
   laneX += (targetX - laneX) * Math.min(1, dt * 6);
   const latA = (laneX - prevX) / Math.max(dt, 1e-4);
@@ -1231,9 +1239,10 @@ function frame(now) {
   renderer.render(scene, camera);
 }
 /* 自動テスト用のデバッグフック（画面には出ない。2D版と同一） */
-window.__demae = { start, changeLane,
+window.__demae = { start, steerTo,
   get state() { return state; }, get t() { return t; }, get dist() { return dist; },
   get speed() { return speed; }, get theta() { return theta; }, get sway() { return sway; },
+  get laneX() { return laneX; }, get steerTarget() { return steerTarget; },
   get plates() { return plates; }, get choko() { return choko; },
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
