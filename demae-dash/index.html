@@ -500,6 +500,34 @@ function cyl(rt, rb, h, color, x, y, z, seg) {
   return m;
 }
 
+// ---------- 文字入りの看板（2026-11-10 A回。標高標識用。CanvasTextureで文字を描く） ----------
+// nodeの自動走行ハーネスには document.createElement がないため、作れないときは
+// 文字なしの白い板にしておく（描画だけの差で、物理・数値には触れない）。
+function makeTextBoard(w, h, lines) {
+  const g = new THREE.Group();
+  g.add(box(w, h, 0.06, 0x2e4a5a, 0, 0, 0)); // 板の裏（濃い藍の縁）
+  g.add(box(w - 0.12, h - 0.12, 0.02, 0xf5f0e6, 0, 0, 0.04)); // 白い面
+  try {
+    if (typeof document !== "undefined" && typeof document.createElement === "function") {
+      const cv = document.createElement("canvas");
+      cv.width = 256; cv.height = Math.round(256 * h / w);
+      const cx = cv.getContext("2d");
+      cx.fillStyle = "#f5f0e6"; cx.fillRect(0, 0, cv.width, cv.height);
+      cx.textAlign = "center"; cx.textBaseline = "middle";
+      for (const ln of lines) { // {text, size(px), y(0〜1の割合), color}
+        cx.font = "bold " + ln.size + "px sans-serif";
+        cx.fillStyle = ln.color || "#2e4a5a";
+        cx.fillText(ln.text, cv.width / 2, cv.height * ln.y);
+      }
+      const tex = new THREE.CanvasTexture(cv);
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.12, h - 0.12),
+        new THREE.MeshBasicMaterial({ map: tex }));
+      plane.position.z = 0.06; g.add(plane);
+    }
+  } catch (e) { /* 文字なしの白い板のまま。描画だけの差 */ }
+  return g;
+}
+
 // ---------- polygonline .pgl モデルの埋め込み（ベスパ） ----------
 // 出典：~/workspace/polygonline_models/models/plain/vespa.pgl（884頂点／1095面／4レイヤー）
 // .pgl は面ごとに color を持ち、頂点の l がレイヤーを指す。ここでは頂点を平坦化し、
@@ -763,9 +791,11 @@ function makeCones(withFlag) { // 工事のコーンと看板（看板は塔よ�
     // 3.6まで赤い柱を立て、白い旗を掲げる。道路の中央寄り（x+側）に置き、
     // 接近するバイクから画面中央寄りに見えるようにする。見た目だけの変更で、
     // 位置・当たり判定・塔の物理には触れない）
-    g.add(box(0.12, 3.6, 0.12, 0xc0392b, 0.85, 1.8, 0.45)); // 赤い柱
-    g.add(box(0.7, 0.45, 0.05, 0xf5f0e6, 1.22, 3.35, 0.45)); // 白い旗
-    g.add(box(0.7, 0.12, 0.06, 0xc0392b, 1.22, 3.35, 0.45)); // 旗の赤い帯
+    // 2026-11-10 A回：着地直後に読めたが小さかった（実画面で幅約20px）ため、柱と旗を
+    // 約1.5倍に大きくした（柱4.8・旗1.1×0.7）。位置・当たり判定は無変更。
+    g.add(box(0.14, 4.8, 0.14, 0xc0392b, 0.85, 2.4, 0.45)); // 赤い柱
+    g.add(box(1.1, 0.7, 0.05, 0xf5f0e6, 1.22, 4.45, 0.45)); // 白い旗
+    g.add(box(1.1, 0.18, 0.06, 0xc0392b, 1.22, 4.45, 0.45)); // 旗の赤い帯
   }
   return g;
 }
@@ -784,6 +814,54 @@ for (const o of OBSTACLES) {
   g.position.x = (o.lane - 1) * 90 / UNIT * 1.03; // 車線の3D位置（バイクと同じ換算）
   scene.add(g);
   obstacleMeshes.push({ mesh: g, def: o });
+}
+// ---------- 標高標識（2026-11-10 A回。下り坂の読み方の案B：カメラに相殺されない固定の目印） ----------
+// 標高プロファイルの制御点（0→16、1200→14、2600→8、3800→3、4600→0）に、
+// その地点の標高を数字で書いた標識を立てる。数字そのものが下りの証拠で、
+// カメラがバイクの高さに追従しても相殺されない。左右交互に置く。
+// 標高の値は slopeY(D) から計算するので、プロファイルを変えても数字は合う。
+// 板の上端は約3.3で、塔の上端（約2.3）より高く、遠くから読める。見た目だけの変更で、
+// 位置・当たり判定・塔の物理・コースデータには触れない。
+function makeElevationSign(d) {
+  const g = new THREE.Group();
+  const h = Math.round(slopeY(d));
+  g.add(box(0.12, 2.2, 0.12, 0x5b4636, -0.7, 1.1, 0)); // 脚2本
+  g.add(box(0.12, 2.2, 0.12, 0x5b4636, 0.7, 1.1, 0));
+  const board = makeTextBoard(1.9, 1.15, [
+    { text: "標高", size: 44, y: 0.26 },
+    { text: h + "m", size: 92, y: 0.66 },
+  ]);
+  board.position.y = 2.75; g.add(board);
+  return g;
+}
+const SIGN_DEFS = [
+  { d: 0, side: 1 }, { d: 1200, side: -1 }, { d: 2600, side: 1 },
+  { d: 3800, side: -1 }, { d: 4600, side: 1 },
+];
+const signMeshes = [];
+for (const s of SIGN_DEFS) {
+  const g = makeElevationSign(s.d);
+  scene.add(g); signMeshes.push({ mesh: g, def: s });
+}
+// ---------- 海辺の灯台（2026-11-10 A回。案Bのもう一つの固定の目印） ----------
+// ゴール手前の海（左側）に、海面（高さ0＝絶対高さ）に立つ灯台を置く。
+// 土台の高さがバイクと一緒に動かないため、山側のスタート（標高16）では
+// 灯台の頭が視界の低い位置に見え、海辺へ下るほど頭が上がって見える。
+// 道路は下るのに灯台は動かない、という対比そのものが下りの証拠になる。
+// 見た目だけの変更で、位置・当たり判定・塔の物理・コースデータには触れない。
+const LIGHTHOUSE_D = 5600, LIGHTHOUSE_X = -34; // 海の中（海はx -97〜-7）。ゴール手前
+const lighthouseGroup = new THREE.Group();
+{
+  lighthouseGroup.add(cyl(2.4, 3.0, 1.0, 0x8a8a7a, 0, 0.3, 0, 12)); // 海に浮く岩場（海面より少し上）
+  const bands = [0xc0392b, 0xf5f0e6, 0xc0392b, 0xf5f0e6, 0xc0392b]; // 赤白の縞の塔（高さ約11）
+  for (let i = 0; i < 5; i++) lighthouseGroup.add(cyl(1.05, 1.15, 2.2, bands[i], 0, 1.8 + i * 2.2, 0, 12));
+  lighthouseGroup.add(cyl(1.35, 1.35, 0.5, 0x333333, 0, 12.0, 0, 12)); // 見張り台
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe27a }); lampMat.fog = false;
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.1, 12), lampMat);
+  lamp.position.y = 12.8; lighthouseGroup.add(lamp); // 灯り（明るい黄色）
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(1.15, 0.9, 12), mat(0x333333));
+  cap.position.y = 13.8; lighthouseGroup.add(cap);
+  scene.add(lighthouseGroup);
 }
 // ---------- 橋本さん宅＋おばあちゃん（ゴール） ----------
 const goalHouse = new THREE.Group();
@@ -983,6 +1061,20 @@ function syncWorld() {
     o.mesh.position.z = -rel / UNIT;
     o.mesh.position.y = slopeY(o.def.x);
     o.mesh.visible = rel > -80 && rel < 2400;
+  }
+  // 標高標識（固定の目印。標高の数字が下りを語る。道路の向きに合わせて少し回す）
+  for (const s of signMeshes) {
+    const rel = s.def.d - dist;
+    s.mesh.position.set(s.def.side * 3.7 + centerX(s.def.d), slopeY(s.def.d), -rel / UNIT);
+    s.mesh.rotation.y = -Math.atan(centerDeriv(s.def.d) * UNIT);
+    s.mesh.visible = rel > -80 && rel < 2400;
+  }
+  // 海辺の灯台（海面＝絶対高さ0に立つ。バイクと一緒に下がらないのが要点。
+  // y には slopeY を足さないこと。ゴール手前の海に置く）
+  {
+    const relLh = LIGHTHOUSE_D - dist;
+    lighthouseGroup.position.set(LIGHTHOUSE_X + centerX(LIGHTHOUSE_D), 0, -relLh / UNIT);
+    lighthouseGroup.visible = relLh > -100 && relLh < 2600;
   }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
