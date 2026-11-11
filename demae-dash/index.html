@@ -321,7 +321,7 @@ function steerTo(x) {
 function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
-  chokoFall = -1; slipFall = -1; collapseT = -1; invuln = 0; shake = 0; hop = 0;
+  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
@@ -382,7 +382,7 @@ function update(dt) {
   omega += (-16 * theta - 5.5 * omega + drive) * dt;
   theta += omega * dt;
   if (airborne) swayV += (-12 * sway - 4.5 * swayV) * dt;
-  else swayV += (-12 * sway - 4.5 * swayV + latA * 0.006 * peekGain) * dt;
+  else swayV += (-12 * sway - 3.2 * swayV + latA * 0.020 * peekGain) * dt; // 2026-11-11 A：グラグラを強める（入力 0.006→0.020、減衰 4.5→3.2で余韻の揺れを残す）。sway は見た目だけの横揺れで失敗判定にはかからないため、大きく振ってよい。theta の latA 係数 0.02 は据え置き（C が既に 0.42/0.44 で、上げると単発の進路変更で崩壊に届くため）
   sway += swayV * dt;
   theta = Math.max(-1.3, Math.min(1.3, theta));
 
@@ -987,6 +987,50 @@ let towerGroup, chokoMesh, plateMeshes = [], fallChokoMesh, fallPlateMesh, rider
   fallPlateMesh.visible = false; bike.add(fallPlateMesh);
 }
 
+// ---------- 崩壊の演出：ざるが物理っぽく飛ぶ・跳ねる・転がる ----------
+// 2026-11-11 A回（ユーザー「物理エンジンてきなね」）。作り込みのアニメーションではなく、
+// 初速度＋重力＋床での跳ね返り＋転がりの簡易シミュレーション（描画だけ。塔の物理・しきい値・失敗3段階には触れない）。
+// 塔ローカル座標で計算する（純粋な数値計算。THREE の行列は使わない）。
+// 床は2段：出前箱の上（y=0.06、箱の範囲 |x|<0.8 かつ |z|<0.7）と地面（y=-1.44＝箱の高さ分だけ下）。
+// 箱から外へ飛んだざるは地面まで落ちて跳ねる。塔の傾き（最大約23°）で床が少し傾くのは簡易計算の範囲として許容する。
+let collapseSim = null; // { bodies: [...5枚...], choko: {...}|null }
+const COLLAPSE_G = 9.8;
+function collapseFloorY(x, z) {
+  return (Math.abs(x) < 0.8 && Math.abs(z) < 0.7) ? 0.06 : -1.44;
+}
+function initCollapseSim(plateBase, chokoBase, thetaSign) {
+  const bodies = [];
+  for (let i = 0; i < 5; i++) {
+    bodies.push({ mesh: plateMeshes[i],
+      x: plateBase[i].x, y: plateBase[i].y, z: plateBase[i].z,
+      vx: (i - 2) * 1.2, vy: 1.2 + (i % 2) * 0.6, vz: -(0.5 + i * 0.25) * thetaSign, // 傾いた方向へ前に飛ぶ
+      rz: 0, vr: (i - 2) * 2.2, settled: false });
+  }
+  let choko = null;
+  if (chokoBase) {
+    choko = { mesh: chokoMesh, x: chokoBase.x, y: chokoBase.y, z: chokoBase.z,
+      vx: 1.8, vy: 2.0, vz: -0.6 * thetaSign, rz: 0, vr: -3.0, settled: false };
+  }
+  collapseSim = { bodies, choko };
+}
+function stepCollapse(dt) {
+  if (!collapseSim) return;
+  const step = (b) => {
+    if (b.settled) return;
+    b.vy -= COLLAPSE_G * dt;
+    b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt; b.rz += b.vr * dt;
+    const fy = collapseFloorY(b.x, b.z);
+    if (b.y < fy) {
+      b.y = fy;
+      if (Math.abs(b.vy) > 0.6) { b.vy = -b.vy * 0.45; b.vx *= 0.65; b.vz *= 0.65; b.vr *= 0.6; }
+      else { b.vy = 0; b.vx *= 0.5; b.vz *= 0.5; b.vr *= 0.5;
+        if (Math.abs(b.vx) < 0.05 && Math.abs(b.vz) < 0.05 && Math.abs(b.vr) < 0.1) b.settled = true; }
+    }
+  };
+  for (const b of collapseSim.bodies) step(b);
+  if (collapseSim.choko) step(collapseSim.choko);
+}
+
 // ---------- 3D同期：ゲーム状態 → 3Dオブジェクト ----------
 function syncWorld() {
   const gy = slopeY(dist); // バイクのいる場所の地面の高さ（絶対高さ。バイク・カメラ・影はこの高さに置く。
@@ -1011,13 +1055,17 @@ function syncWorld() {
     d.mesh.rotation.x = slopeDeriv(D) * UNIT;
     d.mesh.visible = rel < 2600;
   }
+  // 路側の物の表示範囲（2026-11-11 A：手前側のしきい値を -60〜-200 → -600 に統一。
+  // カメラはバイクの約7.4単位＝約430コース単位後ろにあるため、-80〜-200 で消すと
+  // カメラの手前＝画面の中で消えて見える。-600（カメラの約3単位後ろ）まで残し、
+  // 画面外へ出た分は Three.js のフラスタムカリングに任せる。描画コストは無視できる量）
   // 路側の小石と草（道のすぐ脇を流れる。速さの目安）
   for (const e of edgeMeshes) {
     const D = (Math.floor(dist / 100) + e.k - 1) * 100;
     const rel = D - dist;
     const side = (e.k % 2 === 0) ? -1 : 1;
     e.mesh.position.set(side * 3.05 + centerX(D), slopeY(D) + 0.08, -rel / UNIT);
-    e.mesh.visible = rel > -60 && rel < 2600;
+    e.mesh.visible = rel > -600 && rel < 2600;
   }
   // 路側の小物
   for (const p of propMeshes) {
@@ -1025,7 +1073,7 @@ function syncWorld() {
     const rel = idx * 430 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
     p.mesh.position.set(side * 3.7 + centerX(idx * 430), slopeY(idx * 430), -rel / UNIT);
-    p.mesh.visible = rel > -150 && rel < 2600;
+    p.mesh.visible = rel > -600 && rel < 2600;
   }
   // 路側の家
   for (const h of houseMeshes) {
@@ -1033,7 +1081,7 @@ function syncWorld() {
     const rel = idx * 690 + 215 - dist;
     const side = (idx % 2 === 0) ? -1 : 1;
     h.mesh.position.set(side * 6.6 + centerX(idx * 690 + 215), slopeY(idx * 690 + 215), -rel / UNIT);
-    h.mesh.visible = rel > -200 && rel < 2600;
+    h.mesh.visible = rel > -600 && rel < 2600;
   }
   // 松月庵（序盤・左側）
   shopGroup.position.x = -5.6 + centerX(200);
@@ -1045,7 +1093,7 @@ function syncWorld() {
   checkpointGroup.position.x = centerX(CHECK_X);
   checkpointGroup.position.z = -relCp / UNIT;
   checkpointGroup.position.y = slopeY(CHECK_X);
-  checkpointGroup.visible = relCp > -120 && relCp < 2600;
+  checkpointGroup.visible = relCp > -600 && relCp < 2600;
   // 段差
   const relStep = STEP_X - dist;
   stepGroup.position.x = centerX(STEP_X);
@@ -1054,7 +1102,7 @@ function syncWorld() {
   stepGroup.rotation.order = "YXZ";
   stepGroup.rotation.y = -Math.atan(centerDeriv(STEP_X) * UNIT);
   stepGroup.rotation.x = slopeDeriv(STEP_X) * UNIT;
-  stepGroup.visible = !stepDone && relStep > -80 && relStep < 2400;
+  stepGroup.visible = !stepDone && relStep > -600 && relStep < 2400;
   // ジャンプ台
   const relJump = JUMP_X - dist;
   jumpGroup.position.x = centerX(JUMP_X);
@@ -1063,21 +1111,21 @@ function syncWorld() {
   jumpGroup.rotation.order = "YXZ";
   jumpGroup.rotation.y = -Math.atan(centerDeriv(JUMP_X) * UNIT);
   jumpGroup.rotation.x = slopeDeriv(JUMP_X) * UNIT;
-  jumpGroup.visible = !jumpDone && relJump > -80 && relJump < 2400;
+  jumpGroup.visible = !jumpDone && relJump > -600 && relJump < 2400;
   // 障害物（車線ごとに配置。通り過ぎたら隠す）
   for (const o of obstacleMeshes) {
     const rel = o.def.x - dist;
     o.mesh.position.x = centerX(o.def.x) + (o.def.lane - 1) * 90 / UNIT * 1.03;
     o.mesh.position.z = -rel / UNIT;
     o.mesh.position.y = slopeY(o.def.x);
-    o.mesh.visible = rel > -80 && rel < 2400;
+    o.mesh.visible = rel > -600 && rel < 2400;
   }
   // 標高標識（固定の目印。標高の数字が下りを語る。道路の向きに合わせて少し回す）
   for (const s of signMeshes) {
     const rel = s.def.d - dist;
     s.mesh.position.set(s.def.side * 3.7 + centerX(s.def.d), slopeY(s.def.d), -rel / UNIT);
     s.mesh.rotation.y = -Math.atan(centerDeriv(s.def.d) * UNIT);
-    s.mesh.visible = rel > -80 && rel < 2400;
+    s.mesh.visible = rel > -600 && rel < 2400;
   }
   // 海辺の灯台（海面＝絶対高さ0に立つ。バイクと一緒に下がらないのが要点。
   // y には slopeY を足さないこと。ゴール手前の海に置く）
@@ -1088,13 +1136,13 @@ function syncWorld() {
   {
     const relLh = LIGHTHOUSE_D - dist;
     lighthouseGroup.position.set(LIGHTHOUSE_X + centerX(LIGHTHOUSE_D), 0, -relLh / UNIT);
-    lighthouseGroup.visible = relLh > -100 && relLh < 6400;
+    lighthouseGroup.visible = relLh > -600 && relLh < 6400;
   }
   // 橋本さん宅（右側前方。ゴール時は手前に固定）
   let relHouse = GOAL_DIST - dist;
   if (state === "goal") relHouse = 620;
   goalHouse.position.set(5.6 + centerX(GOAL_DIST), slopeY(GOAL_DIST), -relHouse / UNIT);
-  goalHouse.visible = relHouse > -200 && relHouse < 2600;
+  goalHouse.visible = relHouse > -600 && relHouse < 2600;
   // おばあちゃん（ゴール時のみ、家の前）
   grandma.visible = state === "goal";
   if (grandma.visible) grandma.position.set(3.1 + centerX(GOAL_DIST), slopeY(GOAL_DIST), -relHouse / UNIT + 2.6);
@@ -1111,31 +1159,52 @@ function syncWorld() {
     groundShadowMat.opacity = 0.25 * shF;
   }
   // 塔：2D版と同じ「上の段ほど大きくずれる」表現
-  towerGroup.rotation.z = sway * 0.10 + hitJolt * 0.10; // 描画のみ：衝突時の横への揺れ
+  towerGroup.rotation.z = sway * 0.35 + hitJolt * 0.10; // 描画のみ：衝突時の横への揺れ（2026-11-11 A：0.10→0.35。プローブで横の見かけの傾きが 0.3〜0.6°しかなかったため）
   towerGroup.rotation.x = -theta * 0.90 - hitJolt * 0.30; // 描画のみ3倍（旧0.30→0.90）。物理のtheta・しきい値・失敗3段階には触れていない。
   // 衝突時の描画だけの前への揺れ（hitJolt、約0.5秒で消える）。物理の傾きとは別物。
   // 崩壊しきい値0.44では描画約23度、着地ピーク0.25では約13度になり、チェイス視点でも傾きが読める狙い。
-  const failF = (state === "fail" && collapseT >= 0) ? Math.min(1, collapseT * 1.4) : 0;
+  const collapsing = state === "fail" && collapseT >= 0;
+  // 積まれた姿勢（崩壊時はシミュレーションの初期位置にもなる）
+  const plateBase = [];
+  for (let i = 0; i < 5; i++) {
+    plateBase.push({
+      x: (sway * (i + 1) * 7 + Math.sin(theta) * (i + 1) * 2) / UNIT, // 2026-11-11 A：横ずれ係数 5→7（sway の増幅と合わせる）
+      y: i * ZARU_PITCH + 0.06 - theta * (i + 1) * 0.02,
+      z: -Math.sin(theta) * (i + 1) * 0.045 });
+  }
+  if (collapsing && !collapseSim) {
+    const thSign = theta >= 0 ? 1 : -1;
+    const chokoBase = choko ? {
+      x: (sway * 6 * 7 + Math.sin(theta) * 6 * 2) / UNIT + CHOKO_DX,
+      y: plates * ZARU_PITCH + 0.02,
+      z: -Math.sin(theta) * 6 * 0.045 + CHOKO_DZ } : null;
+    initCollapseSim(plateBase, chokoBase, thSign);
+  }
   for (let i = 0; i < 5; i++) {
     const p = plateMeshes[i];
-    p.visible = i < plates || failF > 0;
+    p.visible = i < plates || collapsing;
     if (!p.visible) continue;
-    let ox = (sway * (i + 1) * 5 + Math.sin(theta) * (i + 1) * 2) / UNIT;
-    let oz = -Math.sin(theta) * (i + 1) * 0.045;
-    let oy = i * ZARU_PITCH + 0.06 - theta * (i + 1) * 0.02;
-    let rz = 0;
-    if (failF > 0) { // 崩壊：ざるが横に散りながら落ちる（2D版の散布式を移植）
-      ox += ((i - 2) * 16 + failF * (i - 2) * 34) / UNIT;
-      oy = i * ZARU_PITCH + 0.06 - failF * failF * 2.6 - i * 0.05;
-      rz = failF * (i - 2) * 0.9;
+    if (collapsing && collapseSim) {
+      const b = collapseSim.bodies[i];
+      p.position.set(b.x, b.y, b.z);
+      p.rotation.z = b.rz;
+    } else {
+      p.position.set(plateBase[i].x, plateBase[i].y, plateBase[i].z);
+      p.rotation.z = 0;
     }
-    p.position.set(ox, oy, oz);
-    p.rotation.z = rz;
   }
   // 猪口（残り枚数の上。最上段プレートのずれに追随しつつ、隅オフセットを加える）
-  const chokoOff = (sway * 6 * 5 + Math.sin(theta) * 6 * 2) / UNIT;
-  chokoMesh.visible = choko;
-  chokoMesh.position.set(chokoOff + CHOKO_DX, plates * ZARU_PITCH + 0.02, -Math.sin(theta) * 6 * 0.045 + CHOKO_DZ);
+  const chokoOff = (sway * 6 * 7 + Math.sin(theta) * 6 * 2) / UNIT; // 2026-11-11 A：横ずれ係数 5→7（プレートと合わせる）
+  if (collapsing && collapseSim && collapseSim.choko) {
+    const b = collapseSim.choko;
+    chokoMesh.visible = true;
+    chokoMesh.position.set(b.x, b.y, b.z);
+    chokoMesh.rotation.z = b.rz;
+  } else {
+    chokoMesh.visible = choko;
+    chokoMesh.position.set(chokoOff + CHOKO_DX, plates * ZARU_PITCH + 0.02, -Math.sin(theta) * 6 * 0.045 + CHOKO_DZ);
+    chokoMesh.rotation.z = 0;
+  }
   // 滑落演出（描画のみ：1.8秒かけて滑り落ちる。従来1秒では実画面で見逃しやすかったため。物理・しきい値には触れていない）
   if (chokoFall >= 0 && chokoFall < 1.8) {
     const f = chokoFall / 1.8;
@@ -1234,7 +1303,7 @@ function frame(now) {
   engineUpdate(); // エンジン音と風の音を速度に合わせる（演出のみ）
   if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
-  if (state === "fail") collapseT += dt;
+  if (state === "fail") { collapseT += dt; stepCollapse(dt); }
   syncWorld();
   syncUI();
   renderer.render(scene, camera);
@@ -1248,6 +1317,7 @@ window.__demae = { start, steerTo,
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
   get obstacleHits() { return obstacleHits; },
+  get collapseSim() { return collapseSim; },
   get braking() { return braking; }, keys,
   get course() { return COURSE; } };
 addEventListener("resize", fitViewport);
