@@ -165,6 +165,7 @@ let sway = 0, swayV = 0;       // 横方向の揺れ（進路変更で生まれ�
 let plates = 5, choko = true;  // 残りざる枚数／猪口あり
 let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
+let blocked = false; // 軽トラの壁に止められているあいだ true（HUDに「ドラッグでよけよう」を出す）
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
@@ -387,7 +388,7 @@ function update(dt) {
   let drive = 0;
   if (!airborne) {
     if (braking) drive += 4.0;            // ブレーキで前へ傾く
-    else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）
+    else if (speed < vmax - 1 && !blocked) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）。壁に止められているあいだは加速していない（力が壁に逃げる）ので、後ろ傾きを入れない。入れると衝突の前傾きを打ち消して塔がほとんど揺れなくなるため。blocked は前フレームの壁の状態。
     drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
   omega += (-16 * theta - 5.5 * omega + drive) * dt;
@@ -444,6 +445,31 @@ function update(dt) {
       }
     } else if (prevDist - BIKE_HALF_LEN > o.x + halfLen) {
       o.hit = true; // 完全に通り過ぎた（当たらず）
+    }
+  }
+
+  // 軽トラは壁（2026-11-12 A回・3回目の手当て。ユーザー報告の「貫通」の決着）。
+  // 連続判定＋速度半減まで入れても、実画面のブラウザ確認では速度の落ちが
+  // 0.9秒で戻ってしまい、バイクが軽トラの車体をすり抜ける様子は変わらず
+  // 「直っていない」との報告だった（2回とも）。速度の数字をサンプリングし損ねる
+  // ほど短い減速では、当たったことが読めない。駐車中の車両は固いものなので、
+  // 横が重なっているあいだは前に進めない（壁）にする。塔への衝撃は上記の
+  // 連続判定のまま（初回だけ）。止まっても自動加速で速度は戻ろうとするが、
+  // 壁が dist を接触点に留めるので、ドラッグで横へよけるまで進めない。
+  // コーン・荷物は軽いものとして壁にはしない（衝撃＋速度半減だけ）。
+  // すでに脇に入っている場合（横からすり込んだ場合）は押し戻さない（前に
+  // 進む分にはそのまま通す）。塔の物理の核・しきい値・失敗3段階は無変更。
+  blocked = false;
+  for (const o of OBSTACLES) {
+    if (o.type !== "truck") continue;
+    const halfLen = obstacleHalfLen(o);
+    const rearEdge = o.x - halfLen; // 軽トラの後端（バイクの前端が触れる位置）
+    const latOverlap = Math.abs(laneX - (o.lane - 1) * 90) < o.halfW;
+    // 前フレームは外にいて、今フレームで後端へめり込む場合だけ止める。
+    if (latOverlap && prevDist + BIKE_HALF_LEN <= rearEdge && dist + BIKE_HALF_LEN > rearEdge) {
+      dist = rearEdge - BIKE_HALF_LEN; // 接触点（1261）に留める
+      speed = 0;
+      blocked = true;
     }
   }
 
@@ -1309,6 +1335,7 @@ function syncUI() {
     for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離（手前の端まで。中心までの表示だと接触の直前に「1m」と出て予告が遅かったため、2026-11-12 A回に端までに変えた）
       if (!o.hit && dist < o.x - obstacleHalfLen(o)) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - obstacleHalfLen(o) - dist) / UNIT)) + "m"; break; }
     }
+    if (blocked) distText += " ・ 軽トラにぶつかった！ ドラッグでよけよう"; // 壁に止められているあいだのヒント（2026-11-12 A回）
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
