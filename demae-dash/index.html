@@ -165,7 +165,8 @@ let sway = 0, swayV = 0;       // 横方向の揺れ（進路変更で生まれ�
 let plates = 5, choko = true;  // 残りざる枚数／猪口あり
 let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
-let blocked = false; // 軽トラの壁に止められているあいだ true（HUDに「ドラッグでよけよう」を出す）
+let truckHintT = 0; // 軽トラにぶつかった直後のヒント表示タイマー（HUDに「ドラッグでよけよう」を出す。2026-11-12 B）
+let blinkT = 0; // 軽トラにぶつかった直後の点滅タイマー（自機の点滅。2026-11-12 B）
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
@@ -177,7 +178,8 @@ const UNIT = 58; // dist → 3Dユニット換算
 // 位置は鳥居(2900)・段差(3200)・ジャンプ台(4600)から離し、衝撃が重ならないようにする。
 // 当たった場合の衝撃は段差と同程度（0.4 + speed*0.003）を角速度へ加える流儀で、
 // 単独では猪口・滑落のしきい値に届かず、ブレーキなどと重なったときだけ滑落に進む。
-// 崩壊には届かない設計。避ければ何も起きない。判定は障害物ごとに1回だけ。
+// 崩壊には届かない設計。避ければ何も起きない。コーン・荷物は障害物ごとに1回だけ。
+// 軽トラだけは消費せず、重なるたびに跳ね返す（ノックバック＋点滅無敵。2026-11-12 B）。
 // halfW は当たり判定の半幅（laneX単位。隣の車線の中心までは90あるので、隣の車線に
 // すっぽり入っていれば当たらない。車線変更の途中でかすめると当たる）。
 // ---------- 判断の連続（2026-11-07 ユーザー決定。2026-11-07 C回で連なりに組み替え） ----------
@@ -332,7 +334,7 @@ function steerTo(x) {
 function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
-  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0;
+  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
@@ -388,7 +390,7 @@ function update(dt) {
   let drive = 0;
   if (!airborne) {
     if (braking) drive += 4.0;            // ブレーキで前へ傾く
-    else if (speed < vmax - 1 && !blocked) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）。壁に止められているあいだは加速していない（力が壁に逃げる）ので、後ろ傾きを入れない。入れると衝突の前傾きを打ち消して塔がほとんど揺れなくなるため。blocked は前フレームの壁の状態。
+    else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）
     drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
   omega += (-16 * theta - 5.5 * omega + drive) * dt;
@@ -404,8 +406,7 @@ function update(dt) {
   if (hop > 0) hop = Math.max(0, hop - dt * 3);
 
   // 障害物：進路変更を強いる。避ければ何も起きず、当たったら段差と同じ流儀で
-  // 角速度へ衝撃を加える（段差と同程度）。判定は障害物ごとに1回だけ。
-  // 無敵時間中も衝撃自体は加わる（段差と同じ扱い。3段階の判定は無敵時間が守る）。
+  // 角速度へ衝撃を加える（段差と同程度）。
   // 2026-11-12 A回：軽トラ貫通バグの修正（ユーザー報告 2026-11-11 20:28・20:53）。
   // 旧判定は dist >= o.x の一点（障害物の中心）＋その1フレーム分の横位置だけ
   // だった。軽トラの車体は前後±81、バイクは前後±58あるため、見た目には
@@ -429,6 +430,30 @@ function update(dt) {
   // は切る前の速度で計算し、塔の物理の核・しきい値・失敗3段階は無変更。
   // 障害物に当たるとタイムを失うので、避ける意味がはっきりする。
   // カメラの揺れも 4→8 に強めた（描画のみ）。
+  // 2026-11-12 A回（3つ目の手当て）：軽トラを壁にした。連続判定＋速度半減まで
+  // 入れても、実画面のブラウザ確認では速度の落ちが 0.9秒で戻ってしまい、
+  // バイクが軽トラの車体をすり抜ける様子は変わらず「直っていない」との報告
+  // だった（2回とも）。速度の数字をサンプリングし損ねるほど短い減速では、
+  // 当たったことが読めない。駐車中の車両は固いものなので、横が重なっている
+  // あいだは前に進めない（壁）にした。実画面で「直った」と確認できた。
+  // 2026-11-12 B回：壁をやめ、ノックバック＋短時間の点滅にした（ユーザー
+  // 提案 2026-11-12 12:34「壁でピタッと止まるより、ノックバックして自機が
+  // 点滅する無敵時間（よくある方式）の方がよいのでは」）。壁は止まったまま
+  // 困る人がいるうえ、止まること自体がゲームの流れを断ち切るため、よくある
+  // 方式に寄せる。軽トラに当たると、接触点の約1.5m後ろへ跳ね返り、速度は0に
+  // なり、1.2秒だけ自機が点滅する。軽トラは消費しないので、よけずに進めば
+  // また当たる。重なるたびに跳ね返すため、壁と同じくすり抜けは起きない
+  // （車体の区間を越えて前に進めない）。コーン・荷物は軽いものとして
+  // 従来どおり（衝撃＋速度半減・1回だけ）。塔の物理の核・しきい値・失敗3段階
+  // は無変更。
+  // 点滅と3段階の無敵は別物（2026-11-12 B回の見直し）：軽トラのヒットでは
+  // 共有の invuln（3段階の判定を守る無敵）を立てない。立てると、軽トラの
+  // 脇でハンドルを切るたびに再ヒットして invuln が更新され続け、塔が
+  // 0.44 を越えても崩壊しなくなる抜け道になる（自動走行Mで確認：最大傾き
+  // 0.83でも崩壊せずゴールしてしまった）。跳ね返しで離れるため連打には
+  // ならず、再び当たるには加速し直して接触点まで戻る必要がある（約1.4秒）。
+  // 点滅だけのタイマー（blinkT）で「いまは当たらない時間」を見せる。
+  // 3段階を守る無敵は、従来どおり滑落後の1.6秒だけ。
   for (const o of OBSTACLES) {
     if (o.hit) continue;
     const halfLen = obstacleHalfLen(o);
@@ -436,42 +461,31 @@ function update(dt) {
     // バイクの区間（前フレームの後端〜今フレームの前端）と障害物の区間の重なり。
     // 前フレームの位置から見ることで、フレーム間で飛び越えても逃さない。
     if (dist + BIKE_HALF_LEN >= o.x - halfLen && prevDist - BIKE_HALF_LEN <= o.x + halfLen) {
-      if (latOverlap) {
+      if (!latOverlap) continue; // 脇を走っている（当たらない）
+      if (o.type === "truck") {
+        // 軽トラは固いので跳ね返る＋短い点滅（2026-11-12 B。壁からの変更）。
+        // 消費しない（通り過ぎてしまえば下の else if で消費する）。
+        // 3段階の無敵（invuln）は立てない（上記の見直しを参照）。
+        obstacleHits++;
+        omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
+        dist = o.x - halfLen - BIKE_HALF_LEN - 90; // 接触点の約1.5m後ろへ跳ね返る
+        speed = 0;
+        blinkT = 1.2; // 点滅（描画は syncWorld で bike.visible を点滅）
+        truckHintT = 2.5; // HUDに「ドラッグでよけよう」を出す
+        hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
+      } else {
         o.hit = true;
         obstacleHits++;
         omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
-        speed *= 0.5; // 固いものに当たったので速度も半分に（上記の追記を参照）
+        speed *= 0.5; // 軽いものに当たったので速度も半分に（上記の追記を参照）
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       }
     } else if (prevDist - BIKE_HALF_LEN > o.x + halfLen) {
       o.hit = true; // 完全に通り過ぎた（当たらず）
     }
   }
-
-  // 軽トラは壁（2026-11-12 A回・3回目の手当て。ユーザー報告の「貫通」の決着）。
-  // 連続判定＋速度半減まで入れても、実画面のブラウザ確認では速度の落ちが
-  // 0.9秒で戻ってしまい、バイクが軽トラの車体をすり抜ける様子は変わらず
-  // 「直っていない」との報告だった（2回とも）。速度の数字をサンプリングし損ねる
-  // ほど短い減速では、当たったことが読めない。駐車中の車両は固いものなので、
-  // 横が重なっているあいだは前に進めない（壁）にする。塔への衝撃は上記の
-  // 連続判定のまま（初回だけ）。止まっても自動加速で速度は戻ろうとするが、
-  // 壁が dist を接触点に留めるので、ドラッグで横へよけるまで進めない。
-  // コーン・荷物は軽いものとして壁にはしない（衝撃＋速度半減だけ）。
-  // すでに脇に入っている場合（横からすり込んだ場合）は押し戻さない（前に
-  // 進む分にはそのまま通す）。塔の物理の核・しきい値・失敗3段階は無変更。
-  blocked = false;
-  for (const o of OBSTACLES) {
-    if (o.type !== "truck") continue;
-    const halfLen = obstacleHalfLen(o);
-    const rearEdge = o.x - halfLen; // 軽トラの後端（バイクの前端が触れる位置）
-    const latOverlap = Math.abs(laneX - (o.lane - 1) * 90) < o.halfW;
-    // 前フレームは外にいて、今フレームで後端へめり込む場合だけ止める。
-    if (latOverlap && prevDist + BIKE_HALF_LEN <= rearEdge && dist + BIKE_HALF_LEN > rearEdge) {
-      dist = rearEdge - BIKE_HALF_LEN; // 接触点（1261）に留める
-      speed = 0;
-      blocked = true;
-    }
-  }
+  if (truckHintT > 0) truckHintT -= dt;
+  if (blinkT > 0) blinkT -= dt;
 
   // ジャンプ中の飛行と着地：飛ぶ距離と着地の衝撃は離陸時の速度で決まる。
   // 着地だけでは崩壊しない（きれいに速く飛んでも傾きのピークは約0.25で、
@@ -694,24 +708,34 @@ function makeRibbon(halfW, yOff, color, centerOff) {
 const roadMesh = makeRibbon(2.8, 0, 0x8d8d8d, 0); // 道路本体（幅5.6。従来の板と同じ幅）
 const roadEdgeL = makeRibbon(0.07, 0.01, 0xf5f0e6, -2.75); // 左の白い縁取り
 const roadEdgeR = makeRibbon(0.07, 0.01, 0xf5f0e6, 2.75); // 右の白い縁取り
-// 車線の破線（2D版と同じく120刻み・長さ55で流す）
+// 車線の破線（2D版と同じく120刻み・長さ55）
+// 2026-11-12 B回：使い回し（Math.floor(dist/120)で窓をずらす方式）をやめ、
+// コース座標に固定した。使い回しでは120の倍数をまたぐ瞬間に破線26本が
+// 同時に120単位（2単位）先へ瞬間移動し、路面の縞が震えて見えた。
+// 固定すれば破線は道路と一体で近づくだけになる（道路のリボンと同じ流儀）。
 const dashMeshes = [];
 for (const bx of [-0.75, 0.75]) {
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 49; k++) {
     const d = box(0.12, 0.02, 55 / UNIT, 0xf5f0e6, bx, 0.012, 0);
     d.rotation.order = "YXZ"; // ヨー（曲がり）→ピッチ（坂）の順。2026-11-09 A回：カーブで破線も道に沿うように
-    scene.add(d); dashMeshes.push({ mesh: d, bx, k });
+    scene.add(d); dashMeshes.push({ mesh: d, bx, D: k * 120 + 27 });
   }
 }
 // ---------- 路側の小石と草（2026-11-06 C回。スピード感の演出） ----------
 // 道のすぐ脇を流れる小物。速度が上がるほど近くを速く流れるのが目に入り、
 // 速さを伝える。100刻みで左右交互に置く。物理・しきい値には触れない。
+// 2026-11-12 B回：使い回し（Math.floor(dist/100)で窓をずらす方式）をやめ、
+// コース座標に固定した。使い回しでは100の倍数をまたぐ瞬間に小石24個が
+// 同時に100単位（1.7単位）先へ瞬間移動し、しかも左右の割り振りが
+// 1つずれて小石の並びが反転したため、ユーザーの見た「点滅してる」「速度と
+// 合ってない」「ランダムに現れてる？」になっていた。固定すれば小石は
+// 道路と一体で近づくだけになる。表示範囲は従来どおり（-600〜2600）。
 const edgeMeshes = [];
-for (let k = 0; k < 24; k++) {
+for (let k = 0; k < 58; k++) {
   const stone = k % 5 === 4
     ? box(0.22, 0.22, 0.22, 0xe08a4a, 0, 0, 0)   // たまに橙の花の房
     : box(0.2, 0.14, 0.2, 0xd8d2c4, 0, 0, 0);    // 白っぽい小石
-  scene.add(stone); edgeMeshes.push({ mesh: stone, k });
+  scene.add(stone); edgeMeshes.push({ mesh: stone, D: 50 + k * 100, side: (k % 2 === 0) ? -1 : 1 });
 }
 {
   const cols = [0xffd9d9, 0xfff0c2, 0xd9f2d9, 0xe3d7ff];
@@ -755,9 +779,11 @@ const propMeshes = [];
 for (let k = 0; k < 14; k++) {
   const makers = [makeLantern, makeTorii, makeVending];
   const m = makers[k % 3]();
-  scene.add(m); propMeshes.push({ mesh: m, k });
+  scene.add(m); propMeshes.push({ mesh: m, D: k * 430, side: (k % 2 === 0) ? -1 : 1 });
 }
 // ---------- 路側の家（690刻み・両側） ----------
+// 2026-11-12 B回：小石・破線と同じくコース座標に固定した（使い回しでは
+// 430の倍数をまたぐ瞬間に430単位（7.4単位）先へ瞬間移動し、左右も反転した）。
 function makeHouse(wallColor) {
   const g = new THREE.Group();
   g.add(box(3.6, 2.6, 3.2, wallColor, 0, 1.3, 0));
@@ -769,9 +795,9 @@ function makeHouse(wallColor) {
 const houseMeshes = [];
 {
   const cols = [0xffd9d9, 0xfff0c2, 0xd9f2d9, 0xe3d7ff, 0xffe3c2];
-  for (let k = 0; k < 8; k++) {
+  for (let k = 0; k < 9; k++) {
     const m = makeHouse(cols[k % cols.length]);
-    scene.add(m); houseMeshes.push({ mesh: m, k });
+    scene.add(m); houseMeshes.push({ mesh: m, D: 215 + k * 690, side: (k % 2 === 0) ? -1 : 1 });
   }
 }
 // ---------- 松月庵の店先（序盤に脇を通る） ----------
@@ -1112,43 +1138,36 @@ function syncWorld() {
   roadMesh.position.z = dist / UNIT;
   roadEdgeL.position.z = dist / UNIT;
   roadEdgeR.position.z = dist / UNIT;
-  // 破線（坂に沿って高さと傾きを合わせる）
+  // 破線（坂に沿って高さと傾きを合わせる。コース座標に固定・2026-11-12 B）
   for (const d of dashMeshes) {
-    const rel = (Math.floor(dist / 120) + d.k) * 120 - dist;
-    const D = dist + rel + 27;
-    d.mesh.position.x = centerX(D) + d.bx; // 車線の左右2本（bx=±0.75）を中心線に沿わせる。中心線だけだと2本が中央に重なる
-    d.mesh.position.z = -(rel + 27) / UNIT;
-    d.mesh.position.y = slopeY(D) + 0.012;
-    d.mesh.rotation.y = -Math.atan(centerDeriv(D) * UNIT); // カーブで破線も道の向きに合わせる（2026-11-09 A回）
-    d.mesh.rotation.x = slopeDeriv(D) * UNIT;
-    d.mesh.visible = rel < 2600;
+    const rel = d.D - dist;
+    d.mesh.position.x = centerX(d.D) + d.bx; // 車線の左右2本（bx=±0.75）を中心線に沿わせる。中心線だけだと2本が中央に重なる
+    d.mesh.position.z = -rel / UNIT;
+    d.mesh.position.y = slopeY(d.D) + 0.012;
+    d.mesh.rotation.y = -Math.atan(centerDeriv(d.D) * UNIT); // カーブで破線も道の向きに合わせる（2026-11-09 A回）
+    d.mesh.rotation.x = slopeDeriv(d.D) * UNIT;
+    d.mesh.visible = rel > -600 && rel < 2600;
   }
   // 路側の物の表示範囲（2026-11-11 A：手前側のしきい値を -60〜-200 → -600 に統一。
   // カメラはバイクの約7.4単位＝約430コース単位後ろにあるため、-80〜-200 で消すと
   // カメラの手前＝画面の中で消えて見える。-600（カメラの約3単位後ろ）まで残し、
   // 画面外へ出た分は Three.js のフラスタムカリングに任せる。描画コストは無視できる量）
-  // 路側の小石と草（道のすぐ脇を流れる。速さの目安）
+  // 路側の小石と草（道のすぐ脇を流れる。速さの目安。コース座標に固定・2026-11-12 B）
   for (const e of edgeMeshes) {
-    const D = (Math.floor(dist / 100) + e.k - 1) * 100;
-    const rel = D - dist;
-    const side = (e.k % 2 === 0) ? -1 : 1;
-    e.mesh.position.set(side * 3.05 + centerX(D), slopeY(D) + 0.08, -rel / UNIT);
+    const rel = e.D - dist;
+    e.mesh.position.set(e.side * 3.05 + centerX(e.D), slopeY(e.D) + 0.08, -rel / UNIT);
     e.mesh.visible = rel > -600 && rel < 2600;
   }
-  // 路側の小物
+  // 路側の小物（コース座標に固定・2026-11-12 B）
   for (const p of propMeshes) {
-    const idx = Math.floor(dist / 430) - 1 + p.k;
-    const rel = idx * 430 - dist;
-    const side = (idx % 2 === 0) ? -1 : 1;
-    p.mesh.position.set(side * 3.7 + centerX(idx * 430), slopeY(idx * 430), -rel / UNIT);
+    const rel = p.D - dist;
+    p.mesh.position.set(p.side * 3.7 + centerX(p.D), slopeY(p.D), -rel / UNIT);
     p.mesh.visible = rel > -600 && rel < 2600;
   }
-  // 路側の家
+  // 路側の家（コース座標に固定・2026-11-12 B）
   for (const h of houseMeshes) {
-    const idx = Math.floor(dist / 690) - 1 + h.k;
-    const rel = idx * 690 + 215 - dist;
-    const side = (idx % 2 === 0) ? -1 : 1;
-    h.mesh.position.set(side * 6.6 + centerX(idx * 690 + 215), slopeY(idx * 690 + 215), -rel / UNIT);
+    const rel = h.D - dist;
+    h.mesh.position.set(h.side * 6.6 + centerX(h.D), slopeY(h.D), -rel / UNIT);
     h.mesh.visible = rel > -600 && rel < 2600;
   }
   // 松月庵（序盤・左側）
@@ -1219,6 +1238,11 @@ function syncWorld() {
   const bikeX = centerX(dist) + laneX / UNIT * 1.03 - peekF * 0.9; // laneX(±90) → レーン幅(±1.55)
   const bob = Math.sin(t * 18) * (speed > 5 ? 0.025 : 0) + hop * 0.14;
   bike.position.set(bikeX, gy + bob + jumpY, 0);
+  // 無敵時間中は自機を点滅させる（2026-11-12 B。軽トラのノックバック直後の
+  // 点滅と、滑落後の無敵（1.6秒）の見せ方。描画だけ）
+  const blinkOff = (blinkT > 0 || invuln > 0) && state === "play" && Math.floor(t * 8) % 2 === 0;
+  bike.visible = !blinkOff;
+  if (groundShadow) groundShadow.visible = !blinkOff;
   // 地面の影はバイクと一緒に浮かせず、地面に残す（浮くほど小さく・薄く）
   if (groundShadow) {
     const shF = 1 / (1 + jumpY * 0.9);
@@ -1335,7 +1359,7 @@ function syncUI() {
     for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離（手前の端まで。中心までの表示だと接触の直前に「1m」と出て予告が遅かったため、2026-11-12 A回に端までに変えた）
       if (!o.hit && dist < o.x - obstacleHalfLen(o)) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - obstacleHalfLen(o) - dist) / UNIT)) + "m"; break; }
     }
-    if (blocked) distText += " ・ 軽トラにぶつかった！ ドラッグでよけよう"; // 壁に止められているあいだのヒント（2026-11-12 A回）
+    if (truckHintT > 0) distText += " ・ 軽トラにぶつかった！ ドラッグでよけよう"; // 跳ね返された直後のヒント（2026-11-12 B）
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
@@ -1391,6 +1415,8 @@ window.__demae = { start, steerTo,
   get airborne() { return airT >= 0; }, get jumpY() { return jumpY; }, get jumpSpeed() { return jumpSpeed; },
   get checkpoint() { return checkpointDone; }, get checkpointT() { return checkpointT; },
   get obstacleHits() { return obstacleHits; },
+  get invuln() { return invuln; },
+  get blinkT() { return blinkT; },
   get collapseSim() { return collapseSim; },
   get braking() { return braking; }, keys,
   get course() { return COURSE; } };
