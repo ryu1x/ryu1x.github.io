@@ -194,6 +194,16 @@ const UNIT = 58; // dist → 3Dユニット換算
 const OBSTACLES = COURSE.obstacles.map(o => ({ ...o, hit: false })); // コースJSONから読む（2026-11-08 C回にデータ化）
 let obstacleHits = 0;
 let hitJolt = 0; // 障害物に当たった瞬間の描画だけの揺れ（衝撃の見た目。物理のtheta・しきい値には触れない）
+// 障害物とバイクの前後の半分の長さ（コース単位。見た目のモデルの寸法から。
+// 2026-11-12 A回：軽トラ貫通バグの修正で使う。course.json には置かない。
+// 半分の長さは配置ではなく車種の見た目で決まるため、モデルのあるこの
+// ファイルで種別ごとに持つ。エディタで消える心配もない）。
+// 軽トラは z -1.4〜+1.4（1.4単位＝81）、コーンは看板込みで z -0.55〜+0.47
+// （約35）、荷物は z ±0.35（約25）。バイクはベスパ全長 2.005 の半分
+// 1.0単位＝58。判定は「バイクの前端が障害物の後端に触れた瞬間」に火がつく。
+const BIKE_HALF_LEN = 58;
+const OBSTACLE_HALF_LEN = { truck: 81, cones: 35, crates: 25 };
+function obstacleHalfLen(o) { return OBSTACLE_HALF_LEN[o.type] ?? 35; }
 
 // ---------- 上り坂（2026-11-06 C回。見た目だけの坂。物理・速度には触れない） ----------
 // チェイス視点で先の道が持ち上がって見え、軽トラ（1400・中央）が塔の裏に
@@ -345,6 +355,7 @@ function update(dt) {
   const vmax = (150 + Math.min(45, t * 1.2)) * slowF;
   if (braking) speed = Math.max(0, speed - 260 * dt);
   else speed = Math.min(vmax, speed + 95 * dt);
+  const prevDist = dist; // 障害物の連続判定用：このフレームの始点
   dist += speed * dt;
 
   // 鳥居チェックポイント（中間地点。通過の記録と表示だけで、物理・評価・のびタイマーには触れない）
@@ -394,14 +405,33 @@ function update(dt) {
   // 障害物：進路変更を強いる。避ければ何も起きず、当たったら段差と同じ流儀で
   // 角速度へ衝撃を加える（段差と同程度）。判定は障害物ごとに1回だけ。
   // 無敵時間中も衝撃自体は加わる（段差と同じ扱い。3段階の判定は無敵時間が守る）。
+  // 2026-11-12 A回：軽トラ貫通バグの修正（ユーザー報告 2026-11-11 20:28・20:53）。
+  // 旧判定は dist >= o.x の一点（障害物の中心）＋その1フレーム分の横位置だけ
+  // だった。軽トラの車体は前後±81、バイクは前後±58あるため、見た目には
+  // dist 1261 で前端が軽トラの後端に触れるのに、判定は 1400 まで火がつかず
+  // 約0.86秒もめり込んだまま走り、途中でハンドルを切ると中心通過の瞬間の
+  // 横位置だけが帯の外れて当たらないこともあった（プローブ TEST4 で再現）。
+  // フレーム落ちで飛ぶ説はプローブで否定済み（しきい値チェック＋dt上限0.05
+  // のため、ジッター／300msの空白でも 1400 で必ず火がつく）。
+  // いまは連続判定：前フレームの後端から今フレームの前端までのバイクの区間と
+  // 障害物の区間の重なりを見て、重なっているあいだ毎フレーム横位置も見る。
+  // 見た目に触れた瞬間に当たる。完全に通り過ぎたら消費する（当たらず）。
+  // 衝撃の大きさ（0.4 + speed*0.003）・塔の物理の核・しきい値は無変更。
   for (const o of OBSTACLES) {
-    if (!o.hit && dist >= o.x) {
-      o.hit = true;
-      if (Math.abs(laneX - (o.lane - 1) * 90) < o.halfW) {
+    if (o.hit) continue;
+    const halfLen = obstacleHalfLen(o);
+    const latOverlap = Math.abs(laneX - (o.lane - 1) * 90) < o.halfW;
+    // バイクの区間（前フレームの後端〜今フレームの前端）と障害物の区間の重なり。
+    // 前フレームの位置から見ることで、フレーム間で飛び越えても逃さない。
+    if (dist + BIKE_HALF_LEN >= o.x - halfLen && prevDist - BIKE_HALF_LEN <= o.x + halfLen) {
+      if (latOverlap) {
+        o.hit = true;
         obstacleHits++;
         omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
         hitJolt = 1; shake = Math.max(shake, 4); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       }
+    } else if (prevDist - BIKE_HALF_LEN > o.x + halfLen) {
+      o.hit = true; // 完全に通り過ぎた（当たらず）
     }
   }
 
@@ -1264,8 +1294,8 @@ function syncUI() {
     if (!checkpointDone) distText += " ・ 鳥居まで " + Math.max(0, Math.round((CHECK_X - dist) / UNIT)) + "m";
     if (!stepDone) distText += " ・ 段差まで " + Math.max(0, Math.round((STEP_X - dist) / UNIT)) + "m";
     if (!jumpDone) distText += " ・ ジャンプ台まで " + Math.max(0, Math.round((JUMP_X - dist) / UNIT)) + "m";
-    for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離
-      if (!o.hit && dist < o.x) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - dist) / UNIT)) + "m"; break; }
+    for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離（手前の端まで。中心までの表示だと接触の直前に「1m」と出て予告が遅かったため、2026-11-12 A回に端までに変えた）
+      if (!o.hit && dist < o.x - obstacleHalfLen(o)) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - obstacleHalfLen(o) - dist) / UNIT)) + "m"; break; }
     }
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
