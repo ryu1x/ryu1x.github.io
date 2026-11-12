@@ -167,6 +167,7 @@ let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let truckHintT = 0; // 軽トラにぶつかった直後のヒント表示タイマー（HUDに「ドラッグでよけよう」を出す。2026-11-12 B）
 let blinkT = 0; // 軽トラにぶつかった直後の点滅タイマー（自機の点滅。2026-11-12 B）
+let stunT = 0; // 軽トラに跳ね返された直後の硬直タイマー（しばらく動かない。2026-11-12 B）
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
 let checkpointDone = false, checkpointT = 0, checkpointShow = 0; // 鳥居チェックポイント（通過記録のみ）
 let braking = false, peeking = false, peekF = 0;
@@ -334,7 +335,7 @@ function steerTo(x) {
 function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
-  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0;
+  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
@@ -357,6 +358,7 @@ function update(dt) {
   // ブレーキで速度を落とす判断が中心になる。塔の物理の核・しきい値は無変更。
   const vmax = (150 + Math.min(45, t * 1.2)) * slowF;
   if (braking) speed = Math.max(0, speed - 260 * dt);
+  else if (stunT > 0) speed = 0; // 跳ね返された直後はしばらく動かない（2026-11-12 Bの追記。速度0が表示で読めるようにするため。硬直中は加速しない）
   else speed = Math.min(vmax, speed + 95 * dt);
   const prevDist = dist; // 障害物の連続判定用：このフレームの始点
   dist += speed * dt;
@@ -390,7 +392,7 @@ function update(dt) {
   let drive = 0;
   if (!airborne) {
     if (braking) drive += 4.0;            // ブレーキで前へ傾く
-    else if (speed < vmax - 1) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）
+    else if (speed < vmax - 1 && stunT <= 0) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）。硬直中は加速していない（止まっているバイクは加速していない）ので、後ろ傾きを入れない。入れると衝突の前傾きを打ち消して塔がほとんど揺れなくなるため（壁のときと同じ理由）。
     drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
   omega += (-16 * theta - 5.5 * omega + drive) * dt;
@@ -470,6 +472,7 @@ function update(dt) {
         omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
         dist = o.x - halfLen - BIKE_HALF_LEN - 90; // 接触点の約1.5m後ろへ跳ね返る
         speed = 0;
+        stunT = 0.6; // しばらく動かない（2026-11-12 Bの追記。実画面のブラウザ確認で、跳ね返りが1フレームの後退＋即再加速では読めず、壁に張りついたように見えたため。速度0が0.6秒読め、跳ね返った位置で止まることで、跳ね返りが目に見えるリズムになる）
         blinkT = 1.2; // 点滅（描画は syncWorld で bike.visible を点滅）
         truckHintT = 2.5; // HUDに「ドラッグでよけよう」を出す
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
@@ -486,6 +489,7 @@ function update(dt) {
   }
   if (truckHintT > 0) truckHintT -= dt;
   if (blinkT > 0) blinkT -= dt;
+  if (stunT > 0) stunT -= dt;
 
   // ジャンプ中の飛行と着地：飛ぶ距離と着地の衝撃は離陸時の速度で決まる。
   // 着地だけでは崩壊しない（きれいに速く飛んでも傾きのピークは約0.25で、
