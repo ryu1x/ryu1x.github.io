@@ -166,6 +166,8 @@ let plates = 5, choko = true;  // 残りざる枚数／猪口あり
 let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let truckHintT = 0; // 軽トラにぶつかった直後のヒント表示タイマー（HUDに「ドラッグでよけよう」を出す。2026-11-12 B）
+let slipDir = 1, chokoDir = 1; // 滑落するざる／猪口が滑る向き（塔の横の傾き sway の符号。2026-11-13 A）
+let slipHintT = 0, chokoHintT = 0; // 滑落の合図の表示タイマー（HUDに「すべり落ちた」を出す。2026-11-13 A）
 let blinkT = 0; // 軽トラにぶつかった直後の点滅タイマー（自機の点滅。2026-11-12 B）
 let stunT = 0; // 軽トラに跳ね返された直後の硬直タイマー（しばらく動かない。2026-11-12 B）
 let stepDone = false, jumpDone = false, airT = -1, airDur = 0, jumpSpeed = 0, jumpY = 0, firstRun = true, slowT = 0;
@@ -335,7 +337,7 @@ function steerTo(x) {
 function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; plates = 5; choko = true;
-  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0;
+  chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0; slipDir = 1; chokoDir = 1; slipHintT = 0; chokoHintT = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
@@ -488,6 +490,8 @@ function update(dt) {
     }
   }
   if (truckHintT > 0) truckHintT -= dt;
+  if (slipHintT > 0) slipHintT -= dt;
+  if (chokoHintT > 0) chokoHintT -= dt;
   if (blinkT > 0) blinkT -= dt;
   if (stunT > 0) stunT -= dt;
 
@@ -526,8 +530,8 @@ function update(dt) {
   // 実際には猪口→滑落→崩壊の順に一段ずつ進む
   if (invuln <= 0) {
     if (a > 0.44) { state = "fail"; collapseT = 0; failMsg = "塔が崩れてしまった…"; thud(); noiseBurst(0.5, 0.3, 500); }
-    else if (a > 0.35 && plates > 0) { plates--; slipFall = 0; invuln = 1.6; omega *= 0.4; noiseBurst(0.25, 0.2, 900); }
-    else if (choko && a > 0.30) { choko = false; chokoFall = 0; noiseBurst(0.15, 0.15, 2400); } // 猪口＝警告役、最初に滑る
+    else if (a > 0.35 && plates > 0) { plates--; slipFall = 0; slipDir = sway >= 0 ? 1 : -1; slipHintT = 2.0; invuln = 1.6; omega *= 0.4; noiseBurst(0.25, 0.2, 900); }
+    else if (choko && a > 0.30) { choko = false; chokoFall = 0; chokoDir = sway >= 0 ? 1 : -1; chokoHintT = 1.5; noiseBurst(0.15, 0.15, 2400); } // 猪口＝警告役、最初に滑る
   }
   if (chokoFall >= 0) chokoFall += dt;
   if (slipFall >= 0) slipFall += dt;
@@ -539,6 +543,14 @@ function nobiPct() { return Math.max(0, Math.min(100, 100 - t * 1.25 - (5 - plat
 function grade() { const n = nobiPct();
   if (n >= 70) return "できたて！"; if (n >= 45) return "まだおいしい"; return "のびてきた…"; }
 function satisfaction() { return Math.round(nobiPct() * plates / 5); }
+// 2026-11-13 B：おばあちゃんの反応（2026-11-10 ユーザー決定。届いた枚数で変わる）。
+// 5枚＝喜び、2〜4枚＝渋い顔、1枚＝激怒。吹き出しの文言だけが変わる（3Dモデルの表情は変えない）。
+// 素材は assets/grandma_happy_01.png / grandma_grumpy_01.png / grandma_angry_01.png（第3週の結果画面用）。
+function grandmaReaction() {
+  if (plates >= 5) return "ありがとね！";
+  if (plates >= 2) return "あらあら、こぼしちゃったねぇ";
+  return "蕎麦一本しかないじゃないか！";
+}
 function rank() { const s = satisfaction();
   if (plates === 5 && s >= 80) return "S"; if (s >= 65) return "A"; if (s >= 45) return "B"; return "C"; }
 
@@ -1302,17 +1314,18 @@ function syncWorld() {
     chokoMesh.rotation.z = 0;
   }
   // 滑落演出（描画のみ：1.8秒かけて滑り落ちる。従来1秒では実画面で見逃しやすかったため。物理・しきい値には触れていない）
+  // 2026-11-13 A：滑る向きを塔の横の傾き（sway）の向きに合わせた。従来は常に右へ滑っていたため、左へ傾いたときに塔を横切って見えにくかった。
   if (chokoFall >= 0 && chokoFall < 1.8) {
     const f = chokoFall / 1.8;
     fallChokoMesh.visible = true;
-    fallChokoMesh.position.set(CHOKO_DX + f * 1.2, BOX_TOP + plates * ZARU_PITCH + 0.02 - f * f * 2.9, TOWER_Z + CHOKO_DZ);
-    fallChokoMesh.rotation.z = -f * 1.2;
+    fallChokoMesh.position.set(chokoDir * (CHOKO_DX + f * 1.2), BOX_TOP + plates * ZARU_PITCH + 0.02 - f * f * 2.9, TOWER_Z + CHOKO_DZ);
+    fallChokoMesh.rotation.z = -chokoDir * f * 1.2;
   } else fallChokoMesh.visible = false;
   if (slipFall >= 0 && slipFall < 1.8) {
     const f = slipFall / 1.8;
     fallPlateMesh.visible = true;
-    fallPlateMesh.position.set(-0.33 + f * 1.35, BOX_TOP + plates * ZARU_PITCH + 0.35 - f * f * 2.7, TOWER_Z);
-    fallPlateMesh.rotation.z = f * 0.8;
+    fallPlateMesh.position.set(slipDir * (0.33 + f * 1.35), BOX_TOP + plates * ZARU_PITCH + 0.35 - f * f * 2.7, TOWER_Z);
+    fallPlateMesh.rotation.z = slipDir * f * 0.8;
   } else fallPlateMesh.visible = false;
   // 運転手の頭（のぞくと少し横へ。2D版の -peekF*18 を踏襲）
   riderHeadParts.position.x = -peekF * 0.3;
@@ -1364,6 +1377,8 @@ function syncUI() {
       if (!o.hit && dist < o.x - obstacleHalfLen(o)) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - obstacleHalfLen(o) - dist) / UNIT)) + "m"; break; }
     }
     if (truckHintT > 0) distText += " ・ 軽トラにぶつかった！ ドラッグでよけよう"; // 跳ね返された直後のヒント（2026-11-12 B）
+    if (chokoHintT > 0) distText += " ・ 猪口がすべり落ちた！"; // 滑落の合図（2026-11-13 A。落下の過程が実画面で見えにくいため、枚数表示の変化と合わせて読めるようにする）
+    if (slipHintT > 0) distText += " ・ ざるが1枚すべり落ちた！";
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
@@ -1392,7 +1407,8 @@ function syncUI() {
     goalL1.textContent = "無事なざる " + plates + "枚！";
     goalL2.textContent = "タイム " + t.toFixed(1) + "秒 ・ 満足度 " + satisfaction() + "% ・ 評価 " + rank();
     goalL3.textContent = grade() + "　中間タイム " + checkpointT.toFixed(1) + "秒　タップ／Enterでもう一度";
-    bubbleEl.style.display = "block"; // おばあちゃんの「ありがとね」
+    bubbleEl.textContent = grandmaReaction(); // 届いた枚数でおばあちゃんの反応が変わる（2026-11-13 B）
+    bubbleEl.style.display = "block";
     if (firstRun) firstRun = false;
   } else { goalEl.style.display = "none"; bubbleEl.style.display = "none"; }
 }
@@ -1421,6 +1437,9 @@ window.__demae = { start, steerTo,
   get obstacleHits() { return obstacleHits; },
   get invuln() { return invuln; },
   get blinkT() { return blinkT; },
+  get slipDir() { return slipDir; }, get chokoDir() { return chokoDir; },
+  get slipHintT() { return slipHintT; }, get chokoHintT() { return chokoHintT; },
+  get slipFall() { return slipFall; }, get chokoFall() { return chokoFall; },
   get collapseSim() { return collapseSim; },
   get braking() { return braking; }, keys,
   get course() { return COURSE; } };
