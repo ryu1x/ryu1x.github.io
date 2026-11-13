@@ -292,7 +292,7 @@ addEventListener("keydown", e => {
   if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
   // ←→は押しっぱなしで滑らかに切れる（目標位置を update() で動かす）。離散の進路変更は廃止。
-  if (e.code === "Enter" || e.code === "Space") { if (state === "title" || state === "goal" || state === "fail") start(); }
+  if (e.code === "Enter" || e.code === "Space") { if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
 function holdBtn(el, on, off) {
@@ -327,7 +327,7 @@ glEl.addEventListener("pointermove", e => {
 function endDrag(e) { if (e.pointerId === dragId) dragId = null; }
 glEl.addEventListener("pointerup", endDrag);
 glEl.addEventListener("pointercancel", endDrag);
-glEl.addEventListener("click", () => { ac(); if (state !== "play") start(); });
+glEl.addEventListener("click", () => { ac(); if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); }); // 2026-11-13 C：再スタートの受け付けを遅らせる（キーと同じ条件。ドラッグの終わりのクリックが崩壊直後の再スタートにならないため）
 // 自動走行・開発用：ハンドルの目標位置を直接置く（ドラッグで目標位置まで動かすのと同じ）。
 // 旧 changeLane（1車線ずつの離散変更）の置き換え。位置は連続値で、±140まで。
 function steerTo(x) {
@@ -1395,8 +1395,10 @@ function syncUI() {
   } else if (state === "fail") {
     // 2026-11-11 B：崩壊の演出が見えるよう、失敗表示は崩壊から 1.2 秒遅らせる。
     // 崩壊直後は #center の暗い幕が画面全体を覆ってざるの飛び散りが見えなかったため。
-    // 1.2 秒のあいだはざるが飛ぶ・跳ねる・転がる様子がそのまま見える。タップ／Enterでの
-    // やり直しは state が fail になった直後から受け付ける（表示の遅れとは別）。
+    // 1.2 秒のあいだはざるが飛ぶ・跳ねる・転がる様子がそのまま見える。
+    // 2026-11-13 C：タップ／Enterでのやり直しも崩壊から 1.5 秒遅らせる。
+    // 崩壊させたドラッグの終わりのクリックがそのまま再スタートになり、失敗画面を
+    // 見ないまま最初から走り直すことがあったため（11-13 C回のブラウザ確認で再現）。
     if (collapseT >= 1.2) { centerEl.style.display = "flex"; }
     else centerEl.style.display = "none";
     centerTitle.textContent = failMsg;
