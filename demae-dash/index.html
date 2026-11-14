@@ -903,7 +903,7 @@ function makeKeiTruck() { // 路駐の軽トラ（荷台に段ボールを高く
   g.add(box(0.8, 0.45, 0.7, 0xc0392b, 0, 2.3, 0.35));
   return g;
 }
-function makeCones(withFlag) { // 工事のコーンと看板（看板は塔より高く立てる）
+function makeCones(withFlag, signShift) { // 工事のコーンと看板（看板は塔より高く立てる）
   const g = new THREE.Group();
   for (const cx of [-0.6, 0, 0.6]) {
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 10), mat(0xff7b3c));
@@ -911,10 +911,17 @@ function makeCones(withFlag) { // 工事のコーンと看板（看板は塔よ�
     g.add(box(0.5, 0.06, 0.5, 0xd95f2b, cx, 0.03, -0.3));
     const band = cyl(0.20, 0.24, 0.12, 0xf5f0e6, cx, 0.45, -0.3, 10); g.add(band);
   }
-  for (const s of [-1, 1]) g.add(box(0.08, 1.7, 0.08, 0x5b4636, s * 0.55, 0.85, 0.45)); // 看板の脚
-  g.add(box(1.45, 1.15, 0.06, 0xc0392b, 0, 2.2, 0.42)); // 看板の赤い枠
-  g.add(box(1.3, 1.0, 0.08, 0xffd166, 0, 2.2, 0.45)); // 看板（黄色）
-  g.add(box(0.9, 0.14, 0.09, 0x333333, 0, 2.2, 0.47)); // 看板の黒い線
+  // 2026-11-14 B回：看板だけを道の外側へ0.8ずらす。看板は車線の真ん中に立って
+  // いたため、バイクが通り過ぎた直後にカメラとバイクの間に入り、バイクを一時
+  // 的に隠していた（11-12 C回の指摘）。コーン・旗・当たり判定はそのまま。
+  // 看板の上端2.78は変わらないので、遠くからの読みやすさは保つ。脚の外側1本は
+  // 道路の縁（±2.8）をわずかにはみ出すが、路肩に立つ看板として自然に読める。
+  // signShift は車線の外側の向き（左車線=-1、右車線=+1）。
+  const sx = (signShift || 0) * 0.8;
+  for (const s of [-1, 1]) g.add(box(0.08, 1.7, 0.08, 0x5b4636, sx + s * 0.55, 0.85, 0.45)); // 看板の脚
+  g.add(box(1.45, 1.15, 0.06, 0xc0392b, sx, 2.2, 0.42)); // 看板の赤い枠
+  g.add(box(1.3, 1.0, 0.08, 0xffd166, sx, 2.2, 0.45)); // 看板（黄色）
+  g.add(box(0.9, 0.14, 0.09, 0x333333, sx, 2.2, 0.47)); // 看板の黒い線
   if (withFlag) {
     // 高い旗（2026-11-08 A回。5300の左コーン専用。画面左端で小さく見え、遠方では
     // ほとんど読めなかったため。看板の上端2.78より高く、塔の上端2.3より十分高い
@@ -940,7 +947,7 @@ function makeCrates() { // 店先のはみ出し荷物（木箱を高く積ん�
 }
 const obstacleMeshes = [];
 for (const o of OBSTACLES) {
-  const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones(o.flag) : makeCrates();
+  const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones(o.flag, o.lane - 1) : makeCrates();
   g.position.x = (o.lane - 1) * 90 / UNIT * 1.03; // 車線の3D位置（バイクと同じ換算）
   scene.add(g);
   obstacleMeshes.push({ mesh: g, def: o });
