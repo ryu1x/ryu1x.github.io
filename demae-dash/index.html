@@ -40,6 +40,12 @@
   #goalLine3 { font-size:18px; margin-top:6px; }
   #bubble { position:absolute; right:12%; bottom:24%; background:#fff; color:#333; border-radius:14px;
     padding:10px 18px; font-size:22px; font-weight:bold; display:none; }
+  /* 2026-11-15 GPT改善 1-1／1-2：起動できないときの案内（WebGL不可・読み込み失敗）。
+     真っ暗な画面のままにしないための表示。通常時は出ない。 */
+  #bootError { inset:0; background:rgba(20,30,50,.88); color:#fff; display:none; z-index:5;
+    flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0 24px; }
+  #bootErrorTitle { font-size:26px; font-weight:bold; }
+  #bootErrorBody { font-size:16px; margin-top:14px; line-height:1.7; max-width:560px; }
   /* 2026-11-07 操作系の刷新（アクセル自動化・マリオカート式）：ボタンは進路・ブレーキ・のぞくの最小限に。
      進路は左手側、ブレーキは右手の親指に届く右下に大きく。のぞくはブレーキの隣に小さく。 */
   #pad { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:flex-end;
@@ -91,6 +97,7 @@
       <div id="goalLine3"></div>
     </div>
     <div id="bubble">ありがとね</div>
+    <div id="bootError" class="overlay"><div id="bootErrorTitle"></div><div id="bootErrorBody"></div></div>
   </div>
   <div id="pad">
     <div class="padGroup">
@@ -104,9 +111,37 @@
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
 <script type="application/json" id="courseJson">{"centerline":[{"d":0,"x":0},{"d":1000,"x":0},{"d":1800,"x":-2.6},{"d":2600,"x":0},{"d":3400,"x":2.8},{"d":4400,"x":0},{"d":5800,"x":0}],"checkpoint":2900,"elevation":[{"d":0,"h":16},{"d":1200,"h":14},{"d":2600,"h":8},{"d":3800,"h":3},{"d":4600,"h":0},{"d":5800,"h":0}],"goalDist":5800,"jump":4600,"name":"コース初版 v1.1（下り強調・標高16）","obstacles":[{"halfW":70,"lane":1,"type":"truck","x":1400},{"halfW":70,"lane":2,"type":"cones","x":2100},{"halfW":62,"lane":2,"type":"crates","x":3800},{"flag":true,"halfW":70,"lane":0,"type":"cones","x":5300}],"step":3200,"version":3}</script>
+<script>
+/* 2026-11-15 GPT改善 1-2：起動の見張り（モジュールより先に置く通常スクリプト）。
+   Three.js は CDN（importmap の three@0.160.0 に固定）から読むため、通信制限・
+   CDN障害・オフラインではモジュール自体が始まらず、画面が真っ暗なままになる。
+   モジュールが読み込めたら __demaeBooted が立ち、15秒たっても立っていなければ
+   読み込み失敗の案内を出す。WebGL不可（1-1）の案内も同じ受け口を使う。 */
+(function () {
+  var shown = false;
+  window.__demaeBootError = function (title, body) {
+    if (shown) return; shown = true;
+    var el = document.getElementById("bootError");
+    if (!el) return;
+    document.getElementById("bootErrorTitle").textContent = title;
+    document.getElementById("bootErrorBody").textContent = body;
+    el.style.display = "flex";
+  };
+  setTimeout(function () {
+    if (!window.__demaeBooted) {
+      console.error("[demae] boot watchdog: module did not start within 15s (CDN load failure?)");
+      window.__demaeBootError("読み込みが終わりません",
+        "ゲームの部品（Three.js）をインターネットから読み込めませんでした。通信環境のよい場所で、ページを再読み込みしてみてください。Wi-Fiにつながっているか、通信制限がかかっていないかも確認してみてください。");
+    }
+  }, 15000);
+})();
+</script>
 <script type="module">
 import * as THREE from "three";
 "use strict";
+// 2026-11-15 GPT改善 1-2：CDNからのモジュール読み込みが成功した印。
+// 読み込みに失敗するとこの行に到達せず、上の見張りが案内を出す。
+window.__demaeBooted = true;
 
 // ---------- コースデータ（JSON。course.json が正本で、ここには同じ内容を埋め込む） ----------
 // 編集は course-editor.html で行い、node sync-course.js で埋め込み直す。
@@ -574,7 +609,44 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x7ec8f7); // 空の水色
 scene.fog = new THREE.Fog(0x7ec8f7, 26, 88);
 const camera = new THREE.PerspectiveCamera(58, 960 / 540, 0.1, 300);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// ---------- 起動チェック（2026-11-15 GPT改善 1-1） ----------
+// WebGL が使えない端末・ブラウザや、Renderer の初期化に失敗した場合は、
+// 真っ暗な画面のままにせず、原因と対処を日本語で出す。詳細は console へ。
+// ゲームの数値（物理・コース・しきい値）には一切触れない。
+function bootFail(title, body, err) {
+  if (err) console.error("[demae] " + title, err);
+  if (typeof window !== "undefined" && typeof window.__demaeBootError === "function") {
+    window.__demaeBootError(title, body);
+  } else {
+    const el = document.getElementById("bootError");
+    if (el) {
+      document.getElementById("bootErrorTitle").textContent = title;
+      document.getElementById("bootErrorBody").textContent = body;
+      el.style.display = "flex";
+    }
+  }
+  throw new Error("demae boot failed: " + title); // 起動を止める（画面には案内が出ている）
+}
+function webglOK() {
+  try {
+    // node の自動走行ハーネスには canvas がないため、判定できる環境だけで判定する
+    if (typeof document === "undefined" || typeof document.createElement !== "function") return true;
+    if (typeof window === "undefined" || !window.WebGLRenderingContext) return false;
+    const cv = document.createElement("canvas");
+    return !!(cv.getContext("webgl2") || cv.getContext("webgl") || cv.getContext("experimental-webgl"));
+  } catch (e) { console.error("[demae] WebGL check failed", e); return false; }
+}
+if (!webglOK()) {
+  bootFail("3D表示（WebGL）が使えません",
+    "お使いのブラウザで WebGL（3D表示の仕組み）が有効になっていないため、ゲームを始められません。ブラウザを最新版に更新するか、別のブラウザで開いてみてください。", null);
+}
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (e) {
+  bootFail("3D表示の初期化に失敗しました",
+    "3D表示の準備でエラーが起きたため、ゲームを始められません。ページを再読み込みしてみてください。直らない場合は、別のブラウザで開いてみてください。", e);
+}
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(960, 540);
 glEl.appendChild(renderer.domElement);
