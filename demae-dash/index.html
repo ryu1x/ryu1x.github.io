@@ -373,7 +373,9 @@ holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = 
 // ブレーキ／のぞくは別要素のボタンなので、ドラッグしながらの同時押しができる。
 const DRAG_PX_PER_LANE = 120, LANE_W = 90, STEER_LIMIT = 140; // ±140まで（道幅いっぱい。車線中心は±90）
 let dragId = null, dragStartX = 0, dragStartTarget = 0;
+let glDownState = null; // 2026-11-15 B（GPT改善 3-1）：画面を押したときの状態を覚える。走行中に始めたドラッグの終わりのクリックが、走行が終わったあとの再スタートにならないようにするため。
 glEl.addEventListener("pointerdown", e => {
+  glDownState = state;
   if (state !== "play" || dragId !== null) return;
   dragId = e.pointerId; dragStartX = e.clientX; dragStartTarget = steerTarget;
   try { glEl.setPointerCapture(e.pointerId); } catch (err) {}
@@ -388,7 +390,11 @@ function endDrag(e) { if (e.pointerId === dragId) dragId = null; }
 glEl.addEventListener("pointerup", endDrag);
 glEl.addEventListener("pointercancel", endDrag);
 glEl.addEventListener("lostpointercapture", endDrag); // 2026-11-15 A（GPT改善 2-2）：キャプチャが暗黙に解けたときの受け口。pointerup／pointercancel のあとに来ることもあるが、endDrag は冪等なので二重呼び出しでも害はない。
-glEl.addEventListener("click", () => { ac(); if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); }); // 2026-11-13 C：再スタートの受け付けを遅らせる（キーと同じ条件。ドラッグの終わりのクリックが崩壊直後の再スタートにならないため）
+glEl.addEventListener("click", () => { ac(); // 2026-11-13 C：再スタートの受け付けを遅らせる（キーと同じ条件。ドラッグの終わりのクリックが崩壊直後の再スタートにならないため）
+  // 2026-11-15 B（GPT改善 3-1）：走行中に押して始めたジェスチャの終わりのクリックは、走行が終わって遅延時間を過ぎていても再スタートにしない。指を置いたまま崩壊・ゴールを見ていた人が、指を離しただけで次の走行へ飛ばされるのを防ぐ。ゴール／失敗画面で新たに押したタップは glDownState が goal／fail なので再スタートできる。
+  const downWasPlay = glDownState === "play"; glDownState = null;
+  if (downWasPlay && (state === "goal" || state === "fail")) return;
+  if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); });
 // 自動走行・開発用：ハンドルの目標位置を直接置く（ドラッグで目標位置まで動かすのと同じ）。
 // 旧 changeLane（1車線ずつの離散変更）の置き換え。位置は連続値で、±140まで。
 function steerTo(x) {
