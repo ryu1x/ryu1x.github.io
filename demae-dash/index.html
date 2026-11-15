@@ -332,11 +332,34 @@ addEventListener("keydown", e => {
   if (e.code === "Enter" || e.code === "Space") { if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
+// 2026-11-15 A（GPT改善 2-2）：ウィンドウがフォーカスを失ったとき
+// （Alt-Tab・通知など）は keyup／pointerup が届かないことがあるため、
+// 押されたまま残っている入力をすべて離す。ゲームの状態・数値は変えない。
+addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;
+  btnBrake = false; btnPeek = false; dragId = null;
+  document.getElementById("bBrake").classList.remove("hold");
+  document.getElementById("bPeek").classList.remove("hold");
+});
 function holdBtn(el, on, off) {
-  const s = e => { e.preventDefault(); ac(); on(); el.classList.add("hold"); };
-  const x = e => { e.preventDefault(); off(); el.classList.remove("hold"); };
-  el.addEventListener("touchstart", s, {passive:false}); el.addEventListener("touchend", x); el.addEventListener("touchcancel", x);
-  el.addEventListener("mousedown", s); el.addEventListener("mouseup", x); el.addEventListener("mouseleave", x);
+  // 2026-11-15 A（GPT改善 2-2）：ボタンは Pointer Events に統一する。
+  // 旧来の touchstart/touchend＋mousedown/mouseup の二重登録では、
+  // 指がボタンの外へ滑って離れたとき mouseup がボタンに届かず、
+  // 割り込み（スクロール横取り・アラート等）の touchcancel が
+  // マウス系には無いため、ボタンが押されたまま残ることがあった。
+  // pointerdown でキャプチャを取ることで、指／マウスがボタンの
+  // 外で離れても pointerup がボタンに届き、pointercancel／
+  // lostpointercapture でも必ず離す処理が走る。押す・離すは
+  // それぞれ1回ずつの呼び出しで、押したまま残らない。
+  const s = e => {
+    e.preventDefault(); ac(); on(); el.classList.add("hold");
+    try { el.setPointerCapture(e.pointerId); } catch (err) {}
+  };
+  const x = () => { off(); el.classList.remove("hold"); };
+  el.addEventListener("pointerdown", s);
+  el.addEventListener("pointerup", x);
+  el.addEventListener("pointercancel", x);
+  el.addEventListener("lostpointercapture", x);
 }
 holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake = false);
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
@@ -364,6 +387,7 @@ glEl.addEventListener("pointermove", e => {
 function endDrag(e) { if (e.pointerId === dragId) dragId = null; }
 glEl.addEventListener("pointerup", endDrag);
 glEl.addEventListener("pointercancel", endDrag);
+glEl.addEventListener("lostpointercapture", endDrag); // 2026-11-15 A（GPT改善 2-2）：キャプチャが暗黙に解けたときの受け口。pointerup／pointercancel のあとに来ることもあるが、endDrag は冪等なので二重呼び出しでも害はない。
 glEl.addEventListener("click", () => { ac(); if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); }); // 2026-11-13 C：再スタートの受け付けを遅らせる（キーと同じ条件。ドラッグの終わりのクリックが崩壊直後の再スタートにならないため）
 // 自動走行・開発用：ハンドルの目標位置を直接置く（ドラッグで目標位置まで動かすのと同じ）。
 // 旧 changeLane（1車線ずつの離散変更）の置き換え。位置は連続値で、±140まで。
