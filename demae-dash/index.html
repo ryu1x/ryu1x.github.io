@@ -1422,7 +1422,7 @@ function syncWorld() {
   stepGroup.rotation.order = "YXZ";
   stepGroup.rotation.y = -Math.atan(centerDeriv(STEP_X) * UNIT);
   stepGroup.rotation.x = slopeDeriv(STEP_X) * UNIT;
-  stepGroup.visible = !stepDone && relStep > -600 && relStep < 2400;
+  stepGroup.visible = relStep > -600 && relStep < 2400;
   // ジャンプ台
   const relJump = JUMP_X - dist;
   jumpGroup.position.x = centerX(JUMP_X);
@@ -1431,7 +1431,7 @@ function syncWorld() {
   jumpGroup.rotation.order = "YXZ";
   jumpGroup.rotation.y = -Math.atan(centerDeriv(JUMP_X) * UNIT);
   jumpGroup.rotation.x = slopeDeriv(JUMP_X) * UNIT;
-  jumpGroup.visible = !jumpDone && relJump > -600 && relJump < 2400;
+  jumpGroup.visible = relJump > -600 && relJump < 2400;
   // 障害物（車線ごとに配置。通り過ぎたら隠す）
   for (const o of obstacleMeshes) {
     const rel = o.def.x - dist;
