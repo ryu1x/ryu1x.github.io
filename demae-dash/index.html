@@ -315,8 +315,8 @@ function engineStart() {
 }
 function engineUpdate() {
   if (!engineOsc) return;
-  const f = Math.min(1, Math.max(0, speed / 195));
-  engineOsc.frequency.value = 55 + speed * 0.45; // 巡航150で約122Hz、全開195で約143Hz
+  const f = Math.min(1, Math.max(0, speed / 230)); // 2026-11-16 A：上限230に合わせる
+  engineOsc.frequency.value = 55 + speed * 0.45; // 巡航170で約132Hz、全開230で約159Hz
   engineGain.gain.value = state === "play" ? 0.016 + f * 0.02 : 0;
   windFilter.frequency.value = 300 + speed * 4;
   windGain.gain.value = state === "play" ? f * f * 0.04 : 0;
@@ -407,7 +407,7 @@ function start() {
   chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0; slipDir = 1; chokoDir = 1; slipHintT = 0; chokoHintT = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = "";
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
-  for (const o of OBSTACLES) o.hit = false; obstacleHits = 0;
+  for (const o of OBSTACLES) o.hit = false; obstacleHits = 0; resetScatter(); // 蹴散らした部品も元の位置へ戻す（2026-11-16 A）
   engineStart(); // エンジン音と風の音を始める（タイトル・ゴール・失敗時は無音）
 }
 
@@ -420,12 +420,14 @@ function update(dt) {
   peekF += ((peeking ? 1 : 0) - peekF) * Math.min(1, dt * 8);
   const slowF = slowT > 0 ? 0.6 : 1; if (slowT > 0) slowT -= dt;
   // アクセル自動化（2026-11-07 ユーザー決定。2026-11-06の長押しアクセルは廃止）：
-  // 上限速度は走り出し150から1秒に1.2ずつ上がり、37.5秒で195に達する。
+  // 上限速度は走り出し170から1秒に1.8ずつ上がり、33.3秒で230に達する。
+  // 2026-11-16 A回：中間レビューでのユーザーの実機感想「簡単すぎるな。
+  // 速度が遅い」を受けて、150→170・1.2/秒→1.8/秒・上限195→230へ引き上げ。
   // 走行中ずっと上がり続ける（ゴールまで上がり切らない）ので、ジャンプ台
-  // （約26秒地点）では約181と、全開195のときの着地ピーク0.29より少し余裕がある。
-  // 速くなるほど段差・着地の衝撃が大きい既存の速度依存が、そのまま速さの代償になる。
+  // （約23秒地点）では約210になる。速くなるほど段差・着地の衝撃が大きい
+  // 既存の速度依存が、そのまま速さの代償になる（新しいペナルティは足さない）。
   // ブレーキで速度を落とす判断が中心になる。塔の物理の核・しきい値は無変更。
-  const vmax = (150 + Math.min(45, t * 1.2)) * slowF;
+  const vmax = (170 + Math.min(60, t * 1.8)) * slowF;
   if (braking) speed = Math.max(0, speed - 260 * dt);
   else if (stunT > 0) speed = 0; // 跳ね返された直後はしばらく動かない（2026-11-12 Bの追記。速度0が表示で読めるようにするため。硬直中は加速しない）
   else speed = Math.min(vmax, speed + 95 * dt);
@@ -555,10 +557,15 @@ function update(dt) {
         truckHintT = 2.5; // HUDに「ドラッグでよけよう」を出す
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       } else {
+        // 軽い障害物（コーン・荷物）は蹴散らす（2026-11-16 A回。ユーザー発案
+        // 2026-11-15「ぶつかっても平気な障害物をけちらしたい」）。コーンや箱が
+        // 物理っぽく飛び散り、ペナルティはごく小さな揺れだけにする（速度は落とさない。
+        // 従来の衝撃 0.4+速度×0.003・速度半減はやめる）。重い軽トラは従来どおり
+        // 跳ね返り＋スタン。塔の物理の核・しきい値・失敗3段階は無変更。
         o.hit = true;
         obstacleHits++;
-        omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
-        speed *= 0.5; // 軽いものに当たったので速度も半分に（上記の追記を参照）
+        omega += 0.15 + speed * 0.001; hop = 1; noiseBurst(0.2, 0.2, 800);
+        initScatter(o);
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       }
     } else if (prevDist - BIKE_HALF_LEN > o.x + halfLen) {
@@ -1007,12 +1014,21 @@ function makeKeiTruck() { // 路駐の軽トラ（荷台に段ボールを高く
 }
 function makeCones(withFlag, signShift) { // 工事のコーンと看板（看板は塔より高く立てる）
   const g = new THREE.Group();
+  // 2026-11-16 A回：コーン3個は1個ずつ小グループにし、蹴散らし（initScatter）の
+  // 対象にする。看板と旗はグループに残し、蹴散らしても立ったままにする
+  // （遠くからの読みやすさの目印は残す）。当たり判定・塔の物理は無変更。
+  const scatterParts = [];
   for (const cx of [-0.6, 0, 0.6]) {
+    const cg = new THREE.Group();
+    cg.position.set(cx, 0, -0.3);
     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 10), mat(0xff7b3c));
-    cone.position.set(cx, 0.35, -0.3); g.add(cone);
-    g.add(box(0.5, 0.06, 0.5, 0xd95f2b, cx, 0.03, -0.3));
-    const band = cyl(0.20, 0.24, 0.12, 0xf5f0e6, cx, 0.45, -0.3, 10); g.add(band);
+    cone.position.set(0, 0.35, 0); cg.add(cone);
+    cg.add(box(0.5, 0.06, 0.5, 0xd95f2b, 0, 0.03, 0));
+    const band = cyl(0.20, 0.24, 0.12, 0xf5f0e6, 0, 0.45, 0, 10); cg.add(band);
+    g.add(cg);
+    scatterParts.push(cg);
   }
+  g.userData.scatterParts = scatterParts;
   // 2026-11-14 B回：看板だけを道の外側へ0.8ずらす。看板は車線の真ん中に立って
   // いたため、バイクが通り過ぎた直後にカメラとバイクの間に入り、バイクを一時
   // 的に隠していた（11-12 C回の指摘）。コーン・旗・当たり判定はそのまま。
@@ -1040,11 +1056,16 @@ function makeCones(withFlag, signShift) { // 工事のコーンと看板（看�
 }
 function makeCrates() { // 店先のはみ出し荷物（木箱を高く積んだ山）
   const g = new THREE.Group();
+  // 2026-11-16 A回：木箱とざるも蹴散らし（initScatter）の対象にする。
+  // 看板にあたる目印はないので、積まれた箱は全部飛ぶ。当たり判定・塔の物理は無変更。
+  const scatterParts = [];
   const wood = [0xa9713f, 0x8a6a2f];
-  for (let i = 0; i < 3; i++) g.add(box(0.7, 0.7, 0.7, wood[i % 2], -0.75 + i * 0.75, 0.35, 0));
-  for (let i = 0; i < 2; i++) g.add(box(0.7, 0.7, 0.7, wood[(i + 1) % 2], -0.38 + i * 0.76, 1.05, 0));
-  g.add(box(0.7, 0.7, 0.7, 0xa9713f, 0, 1.75, 0));
-  const basket = cyl(0.32, 0.26, 0.35, 0xe8c877, 0, 2.28, 0, 10); g.add(basket); // 一番上にざる
+  for (let i = 0; i < 3; i++) scatterParts.push(box(0.7, 0.7, 0.7, wood[i % 2], -0.75 + i * 0.75, 0.35, 0));
+  for (let i = 0; i < 2; i++) scatterParts.push(box(0.7, 0.7, 0.7, wood[(i + 1) % 2], -0.38 + i * 0.76, 1.05, 0));
+  scatterParts.push(box(0.7, 0.7, 0.7, 0xa9713f, 0, 1.75, 0));
+  const basket = cyl(0.32, 0.26, 0.35, 0xe8c877, 0, 2.28, 0, 10); scatterParts.push(basket); // 一番上にざる
+  for (const m of scatterParts) g.add(m);
+  g.userData.scatterParts = scatterParts;
   return g;
 }
 const obstacleMeshes = [];
@@ -1052,7 +1073,7 @@ for (const o of OBSTACLES) {
   const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones(o.flag, o.lane - 1) : makeCrates();
   g.position.x = (o.lane - 1) * 90 / UNIT * 1.03; // 車線の3D位置（バイクと同じ換算）
   scene.add(g);
-  obstacleMeshes.push({ mesh: g, def: o });
+  obstacleMeshes.push({ mesh: g, def: o, parts: g.userData.scatterParts || null });
 }
 // ---------- 標高標識（2026-11-10 A回。下り坂の読み方の案B：カメラに相殺されない固定の目印） ----------
 // 標高プロファイルの制御点（0→16、1200→14、2600→8、3800→3、4600→0）に、
@@ -1261,6 +1282,56 @@ function stepCollapse(dt) {
   if (collapseSim.choko) step(collapseSim.choko);
 }
 
+// ---------- 軽い障害物の蹴散らし（2026-11-16 A回。ユーザー発案 2026-11-15） ----------
+// コーン・荷物に当たると、その部品（コーン3個／木箱6個とざる）が物理っぽく
+// 飛び散る。崩壊シミュレーションと同じ流儀の簡易計算（重力・床での跳ね返り・
+// 転がり）。描画だけ：塔の物理・しきい値・当たり判定・コースには触れない。
+// 看板と旗は飛ばさない（遠くからの目印として残す）。軽トラは対象外。
+// 部品の位置は障害物グループの中の相対座標で動かす（グループ自体はコース座標
+// に固定されたままなので、飛んだ部品はコース上のその場所に残る）。
+let scatterSims = []; // [{ parts: [...], age }]
+function initScatter(o) {
+  const entry = obstacleMeshes.find(m => m.def === o);
+  if (!entry || !entry.parts) return;
+  const parts = entry.parts.map(mesh => ({
+    mesh, bx: mesh.position.x, by: mesh.position.y, bz: mesh.position.z,
+    x: mesh.position.x, y: mesh.position.y, z: mesh.position.z,
+    // 床の高さ：コーンの小グループは原点が地面（0.03）、木箱は中心が箱の半分（0.35）
+    fy: Math.max(0.03, Math.min(mesh.position.y, 0.35)),
+    vx: (Math.random() * 2 - 1) * 2.5, vy: 2 + Math.random() * 1.5,
+    vz: -(1.5 + Math.random() * 2), // バイクから見て前方（コースの先）へ飛ぶ
+    rz: 0, vr: (Math.random() * 2 - 1) * 8, settled: false }));
+  scatterSims.push({ parts, age: 0 });
+}
+function stepScatter(dt) {
+  for (const sim of scatterSims) {
+    sim.age += dt;
+    for (const p of sim.parts) {
+      if (p.settled) continue;
+      p.vy -= 9.8 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.rz += p.vr * dt;
+      if (p.y < p.fy) {
+        p.y = p.fy;
+        if (Math.abs(p.vy) > 0.8) { p.vy = -p.vy * 0.4; p.vx *= 0.6; p.vz *= 0.6; p.vr *= 0.6; }
+        else { p.vy = 0; p.vx *= 0.5; p.vz *= 0.5; p.vr *= 0.5;
+          if (Math.abs(p.vx) < 0.05 && Math.abs(p.vz) < 0.05 && Math.abs(p.vr) < 0.1) p.settled = true; }
+      }
+      p.mesh.position.set(p.x, p.y, p.z);
+      p.mesh.rotation.z = p.rz;
+    }
+  }
+}
+function resetScatter() {
+  for (const sim of scatterSims) {
+    for (const p of sim.parts) {
+      p.mesh.position.set(p.bx, p.by, p.bz);
+      p.mesh.rotation.z = 0;
+      p.mesh.visible = true;
+    }
+  }
+  scatterSims = [];
+}
+
 // ---------- 3D同期：ゲーム状態 → 3Dオブジェクト ----------
 function syncWorld() {
   const gy = slopeY(dist); // バイクのいる場所の地面の高さ（絶対高さ。バイク・カメラ・影はこの高さに置く。
@@ -1456,7 +1527,7 @@ function syncWorld() {
   // スピード感の演出（2026-11-06 C回。物理・数値には触れない）：
   // 速度が上がるほど視野角が広がり（最大+7°）、カメラがわずかに後ろへ引く（最大+0.6）。
   // 振動はごく小さく（±0.02）、塔の傾きの読み取りを邪魔しない程度に留める。
-  const speedF = Math.min(1, Math.max(0, speed / 195));
+  const speedF = Math.min(1, Math.max(0, speed / 230)); // 2026-11-16 A：上限230に合わせる
   const camX = bikeX * 0.55 + peekF * 1.5;
   let cx = camX + Math.sin(t * 37) * 0.015 * speedF,
       cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.02 * speedF,
@@ -1545,6 +1616,7 @@ function frame(now) {
   if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
   if (state === "fail") { collapseT += dt; stepCollapse(dt); }
+  stepScatter(dt); // 蹴散らしたコーン・荷物の飛び散り（描画だけ。2026-11-16 A）
   syncWorld();
   syncUI();
   renderer.render(scene, camera);
@@ -1565,6 +1637,7 @@ window.__demae = { start, steerTo,
   get slipHintT() { return slipHintT; }, get chokoHintT() { return chokoHintT; },
   get slipFall() { return slipFall; }, get chokoFall() { return chokoFall; },
   get collapseSim() { return collapseSim; },
+  get scatterSims() { return scatterSims; },
   get braking() { return braking; }, keys,
   get course() { return COURSE; } };
 addEventListener("resize", fitViewport);
