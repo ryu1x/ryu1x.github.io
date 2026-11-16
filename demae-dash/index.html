@@ -204,6 +204,7 @@ let chokoFall = -1, slipFall = -1, collapseT = -1;
 let invuln = 0, kataAcc = 0, shake = 0, hop = 0, kataHold = 0;
 let truckHintT = 0; // 軽トラにぶつかった直後のヒント表示タイマー（HUDに「ドラッグでよけよう」を出す。2026-11-12 B）
 let truckHintDir = "右"; // 2026-11-16 B：ヒントに出す方向。ぶつかったときのバイクの横位置から、抜けやすい側（今いる側）を選ぶ。左に寄っていれば左、右に寄っていれば右。
+let truckStreak = 0; // 2026-11-16 C：同じ軽トラへの連続衝突回数。真っ直ぐ走り続けて張り付く走行（11-16 A・Bで観測。最長224.1秒の立ち往生）では、2回目以降はヒントを強くし、3回目以降は横への押し出しで抜けられるようにする。
 let slipDir = 1, chokoDir = 1; // 滑落するざる／猪口が滑る向き（塔の横の傾き sway の符号。2026-11-13 A）
 let slipHintT = 0, chokoHintT = 0; // 滑落の合図の表示タイマー（HUDに「すべり落ちた」を出す。2026-11-13 A）
 let blinkT = 0; // 軽トラにぶつかった直後の点滅タイマー（自機の点滅。2026-11-12 B）
@@ -415,7 +416,7 @@ function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; bank = 0; plates = 5; choko = true;
   chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0; slipDir = 1; chokoDir = 1; slipHintT = 0; chokoHintT = 0;
-  stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = ""; truckHintDir = "右";
+  stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = ""; truckHintDir = "右"; truckStreak = 0;
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0; resetScatter(); // 蹴散らした部品も元の位置へ戻す（2026-11-16 A）
   engineStart(); // エンジン音と風の音を始める（タイトル・ゴール・失敗時は無音）
@@ -564,8 +565,16 @@ function update(dt) {
         speed = 0;
         stunT = 0.6; // しばらく動かない（2026-11-12 Bの追記。実画面のブラウザ確認で、跳ね返りが1フレームの後退＋即再加速では読めず、壁に張りついたように見えたため。速度0が0.6秒読め、跳ね返った位置で止まることで、跳ね返りが目に見えるリズムになる）
         blinkT = 1.2; // 点滅（描画は syncWorld で bike.visible を点滅）
-        truckHintT = 2.5; // HUDに「ドラッグでよけよう」を出す
+        truckStreak++; // 同じ軽トラへの連続衝突。走行を始めたら0に戻る（start()）。
         truckHintDir = laneX < 0 ? "左" : "右"; // 2026-11-16 B：方向つきヒント。真後ろに張り付いて跳ね返りを繰り返す走行（11-14 C・11-16 Aで観測）では「ドラッグでよけよう」だけではどちらへ逃げればいいか読めないため、今いる側＝抜けやすい側を指す。中央ちょうど（laneX=0）のときは右を指す。
+        // 2026-11-16 C：張り付きの手当て。2回目以降はヒントを強くする（「何度もぶつかっています」を付け、表示も2.5秒→4.0秒に延ばす）。
+        // 3回目以降は、跳ね返りと同時にハンドルの目標位置をヒント方向へ30ずつずらす（上限は隣の車線の中心±90。軽トラの半幅70を越えるので脇に出られる）。
+        // プレイヤーが既に車線の中心まで切っている（|steerTarget|>=90）ときは押し出さない（プレイヤーの操作と競合させない）。
+        // 塔の物理の核・しきい値・失敗3段階・当たり判定は無変更（steerTarget はドラッグ／キーと同じ入力の目標値で、theta への入力経路は変わらない）。
+        truckHintT = truckStreak >= 2 ? 4.0 : 2.5;
+        if (truckStreak >= 3 && Math.abs(steerTarget) < 90) {
+          steerTarget = Math.max(-90, Math.min(90, steerTarget + (truckHintDir === "左" ? -30 : 30)));
+        }
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       } else {
         // 軽い障害物（コーン・荷物）は蹴散らす（2026-11-16 A回。ユーザー発案
@@ -1585,7 +1594,7 @@ function syncUI() {
     for (const o of OBSTACLES) { // 一番近い未通過の障害物までの距離（手前の端まで。中心までの表示だと接触の直前に「1m」と出て予告が遅かったため、2026-11-12 A回に端までに変えた）
       if (!o.hit && dist < o.x - obstacleHalfLen(o)) { distText += " ・ 障害物まで " + Math.max(0, Math.round((o.x - obstacleHalfLen(o) - dist) / UNIT)) + "m"; break; }
     }
-    if (truckHintT > 0) distText += " ・ 軽トラにぶつかった！ " + truckHintDir + "へドラッグしてよけよう"; // 跳ね返された直後のヒント（2026-11-12 B。2026-11-16 Bで方向つきに）
+    if (truckHintT > 0) distText += " ・ 軽トラにぶつかった！ " + (truckStreak >= 2 ? "何度もぶつかっています。 " : "") + truckHintDir + "へドラッグしてよけよう"; // 跳ね返された直後のヒント（2026-11-12 B。2026-11-16 Bで方向つきに。2026-11-16 Cで2回目以降は強い文言に）
     if (chokoHintT > 0) distText += " ・ 猪口がすべり落ちた！"; // 滑落の合図（2026-11-13 A。落下の過程が実画面で見えにくいため、枚数表示の変化と合わせて読めるようにする）
     if (slipHintT > 0) distText += " ・ ざるが1枚すべり落ちた！";
     hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
@@ -1651,6 +1660,12 @@ window.__demae = { start, steerTo,
   get invuln() { return invuln; },
   get blinkT() { return blinkT; },
   get truckHintT() { return truckHintT; }, get truckHintDir() { return truckHintDir; },
+  get truckStreak() { return truckStreak; },
+  get satisfaction() { return satisfaction(); }, get rank() { return rank(); },
+  get grade() { return grade(); }, get nobiPct() { return nobiPct(); },
+  get grandmaReaction() { return grandmaReaction(); },
+  get goalT() { return goalT; }, get collapseT() { return collapseT; },
+  get slowT() { return slowT; },
   get slipDir() { return slipDir; }, get chokoDir() { return chokoDir; },
   get slipHintT() { return slipHintT; }, get chokoHintT() { return chokoHintT; },
   get slipFall() { return slipFall; }, get chokoFall() { return chokoFall; },
