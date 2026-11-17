@@ -54,6 +54,7 @@
   #pad button { font-size:20px; padding:14px 20px; border-radius:999px; border:0;
     background:#fff7e6; color:#333; box-shadow:0 3px 0 #c9a86a; touch-action:manipulation; }
   #bBrake { font-size:23px; padding:18px 30px; background:#ffe1a8; }
+  #bPause { font-size:18px; padding:14px 18px; background:#e8f4ff; } /* 2026-11-17 C（3-3）：一時停止ボタン。走行中・一時停止中だけ表示 */
   #pad button:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
   #pad button.hold { background:#ffd166; }
   #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px;
@@ -101,11 +102,14 @@
   </div>
   <div id="pad">
     <div class="padGroup">
+      <button id="bPause">⏸ 一時停止</button>
+    </div>
+    <div class="padGroup">
       <button id="bPeek">のぞく（長押し）</button>
       <button id="bBrake">ブレーキ（長押し）</button>
     </div>
   </div>
-  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
+  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦／Esc＝一時停止<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -195,7 +199,45 @@ function profileAt(pts, d, key) {
    ================================================================ */
 
 // ---------- 状態（2D版と同一） ----------
-let state = "title"; // title | play | goal | fail
+let state = "title"; // title | play | pause | goal | fail
+// ---------- ゲーム状態の遷移（2026-11-17 C回・キュー 3-2） ----------
+// 状態は title（タイトル）・play（走行中）・pause（一時停止中）・
+// goal（ゴール）・fail（失敗）の5つ。遷移は setState() だけが行い、
+// ほかの場所から state へ直接代入しない。許す遷移は
+// title→play、play→pause／goal／fail、pause→play、goal→play、
+// fail→play（再スタート）。それ以外は警告を出して無視する
+// （ゲームが止まらないよう投げない）。数値・物理・しきい値は変えない。
+const STATE_TRANSITIONS = {
+  title: ["play"],
+  play: ["pause", "goal", "fail"],
+  pause: ["play"],
+  goal: ["play"],
+  fail: ["play"],
+};
+function setState(next) {
+  if (next === state) return true; // 同じ状態への呼び直しは無害なので通す
+  if (!STATE_TRANSITIONS[state] || STATE_TRANSITIONS[state].indexOf(next) < 0) {
+    console.warn("[demae] invalid state transition: " + state + " -> " + next);
+    return false;
+  }
+  state = next;
+  if (next === "play") frame.last = null; // 復帰時の巨大dt防止（1-3）。dt上限0.05と二重の安全策
+  return true;
+}
+// ---------- 一時停止・再開（2026-11-17 C回・キュー 3-3＋P2 1-3） ----------
+// 走行中だけ止められる。止まっている間は update() が進まない（state が
+// "play" でないため）ので、タイマー・速度・塔の物理はすべて凍る。描画の
+// ループ（rAF）は止めないので、止まった場面がそのまま見える。音も止まる
+// （engineUpdate は play のときだけ鳴る）。別タブへ移るなど画面が
+// 見えなくなったときは自動で止める。再開はボタンのタップ・Enter・画面タップ。
+function pause() { return setState("pause"); }
+function resume() { return setState("play"); }
+function onVisibilityChange() {
+  if (typeof document !== "undefined" && document.hidden === true && state === "play") pause();
+}
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("visibilitychange", onVisibilityChange);
+}
 let t = 0, dist = 0, speed = 0, laneX = 0, steerTarget = 0; // 横位置は連続値（車線スナップなし）。steerTarget はドラッグ／キーで動かす目標位置（±140まで。車線中心は ±90）
 let theta = 0, omega = 0;      // 塔の傾き（前＋／後−）と角速度
 let sway = 0, swayV = 0;       // 横方向の揺れ（進路変更で生まれる）
@@ -373,7 +415,8 @@ addEventListener("keydown", e => {
   if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
   // ←→は押しっぱなしで滑らかに切れる（目標位置を update() で動かす）。離散の進路変更は廃止。
-  if (e.code === "Enter" || e.code === "Space") { if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
+  if (e.code === "Escape") { if (state === "play") pause(); else if (state === "pause") resume(); return; } // 2026-11-17 C（3-3）：Escで一時停止・再開
+  if (e.code === "Enter" || e.code === "Space") { if (state === "title" || state === "pause" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) { if (state === "pause") resume(); else start(); } } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
 // 2026-11-15 A（GPT改善 2-2）：ウィンドウがフォーカスを失ったとき
@@ -407,6 +450,8 @@ function holdBtn(el, on, off) {
 }
 holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake = false);
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
+const bPauseEl = document.getElementById("bPause"); // 2026-11-17 C（3-3）：一時停止ボタン。タップで止める／つづける。長押しボタンではないので click で受ける。
+bPauseEl.addEventListener("click", () => { ac(); if (state === "play") pause(); else if (state === "pause") resume(); });
 // ---------- ハンドルのドラッグ操作（2026-11-10 ユーザー指示。マリオカートツアー式） ----------
 // 相対ドラッグ：指を置いた場所が起点で、そこからの水平の動きでハンドルが切れる。
 // 横位置は車線スナップなしの連続値。指を離したらハンドルは真っ直ぐ側へ戻る
@@ -445,9 +490,9 @@ glEl.addEventListener("click", () => { ac(); // 2026-11-13 C：再スタート�
   // 2026-11-15 B（GPT改善 3-1）：走行中に押して始めたジェスチャの終わりのクリックは、走行が終わって遅延時間を過ぎていても再スタートにしない。指を置いたまま崩壊・ゴールを見ていた人が、指を離しただけで次の走行へ飛ばされるのを防ぐ。ゴール／失敗画面で新たに押したタップは glDownState が goal／fail なので再スタートできる。
   // 2026-11-16 B：ゴール／失敗画面で新たに始めたドラッグ（15px以上動いた操作）も再スタートにしない。ゴール直後に画面をなぞると意図せず次の走行が始まることがあった（11-16 A回の観測）ため。タップ（動いていない操作）だけが再スタートする。
   const downWasPlay = glDownState === "play"; const wasDrag = glDownMoved; glDownState = null; glDownMoved = false;
-  if (downWasPlay && (state === "goal" || state === "fail")) return;
+  if (downWasPlay && (state === "goal" || state === "fail" || state === "pause")) return; // 2026-11-17 C（3-3）：走行中に始めた操作の終わりが、一時停止の再開にもならないよう pause も同じ扱い
   if (wasDrag) return;
-  if (state === "title" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) start(); });
+  if (state === "title" || state === "pause" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) { if (state === "pause") resume(); else start(); } });
 // 自動走行・開発用：ハンドルの目標位置を直接置く（ドラッグで目標位置まで動かすのと同じ）。
 // 旧 changeLane（1車線ずつの離散変更）の置き換え。位置は連続値で、±140まで。
 function steerTo(x) {
@@ -455,7 +500,7 @@ function steerTo(x) {
   steerTarget = Math.max(-STEER_LIMIT, Math.min(STEER_LIMIT, x));
 }
 function start() {
-  state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
+  setState("play"); t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; bank = 0; plates = 5; choko = true;
   chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0; slipDir = 1; chokoDir = 1; slipHintT = 0; chokoHintT = 0;
   stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? PHYS.slowTime : 0; goalT = 0; failMsg = ""; truckHintDir = "右"; truckStreak = 0;
@@ -674,13 +719,13 @@ function update(dt) {
   // 判定は大きい方から行う：傾きはフレームごとに徐々に育つので、
   // 実際には猪口→滑落→崩壊の順に一段ずつ進む
   if (invuln <= 0) {
-    if (a > PHYS.collapseTheta) { state = "fail"; collapseT = 0; failMsg = "塔が崩れてしまった…"; thud(); noiseBurst(0.5, 0.3, 500); }
+    if (a > PHYS.collapseTheta) { setState("fail"); collapseT = 0; failMsg = "塔が崩れてしまった…"; thud(); noiseBurst(0.5, 0.3, 500); }
     else if (a > PHYS.slipTheta && plates > 0) { plates--; slipFall = 0; slipDir = sway >= 0 ? 1 : -1; slipHintT = 2.0; invuln = PHYS.slipInvuln; omega *= PHYS.slipOmegaDamp; noiseBurst(0.25, 0.2, 900); }
     else if (choko && a > PHYS.chokoTheta) { choko = false; chokoFall = 0; chokoDir = sway >= 0 ? 1 : -1; chokoHintT = 1.5; noiseBurst(0.15, 0.15, 2400); } // 猪口＝警告役、最初に滑る
   }
   if (chokoFall >= 0) chokoFall += dt;
   if (slipFall >= 0) slipFall += dt;
-  if (state === "play" && dist >= GOAL_DIST) { state = "goal"; goalT = 0; }
+  if (state === "play" && dist >= GOAL_DIST) { setState("goal"); goalT = 0; }
 }
 /* のびタイマー：麺の鮮度は時間で下がり、ざるを落とすとさらに下がる。
    評価は「到着タイム（→鮮度）× 残った枚数 × 満足度」で出す（第1週は暫定式、第3週で調整） */
@@ -1622,6 +1667,10 @@ const hudEl = document.getElementById("hud"), hudTime = document.getElementById(
 function syncUI() {
   // プレイ中のHUDはプレイ中だけ（ゴール表示との重なり防止。2D版セッションCの修正を踏襲）
   hudEl.style.display = state === "play" ? "block" : "none";
+  // 一時停止ボタンは走行中と一時停止中だけ出す（タイトル・ゴール・失敗時は不要）。
+  // 止まっている間は文言が「▶ つづける」に変わる（2026-11-17 C・3-3）。
+  bPauseEl.style.display = (state === "play" || state === "pause") ? "" : "none";
+  bPauseEl.textContent = state === "pause" ? "▶ つづける" : "⏸ 一時停止";
   if (state === "play") {
     hudTime.textContent = "タイム " + t.toFixed(1) + "秒";
     hudPlates.textContent = "ざる " + plates + "枚 ・ " + grade();
@@ -1652,6 +1701,10 @@ function syncUI() {
     centerEl.style.display = "flex";
     centerTitle.textContent = "出前ダッシュ!!";
     centerSub.textContent = "タップ／Enterでスタート — 松月庵から橋本さん宅へ";
+  } else if (state === "pause") { // 2026-11-17 C（3-3）：一時停止中は場面の上に「止まっている」表示を出す
+    centerEl.style.display = "flex";
+    centerTitle.textContent = "一時停止中";
+    centerSub.textContent = "タップ／Enterでつづける";
   } else if (state === "fail") {
     // 2026-11-11 B：崩壊の演出が見えるよう、失敗表示は崩壊から 1.2 秒遅らせる。
     // 崩壊直後は #center の暗い幕が画面全体を覆ってざるの飛び散りが見えなかったため。
@@ -1684,14 +1737,19 @@ function frame(now) {
   if (hitJolt > 0) hitJolt = Math.max(0, hitJolt - dt * 1.8); // 描画のみ：衝突の揺れは約0.5秒で消える
   if (state === "goal") goalT += dt;
   if (state === "fail") { collapseT += dt; stepCollapse(dt); }
-  stepScatter(dt); // 蹴散らしたコーン・荷物の飛び散り（描画だけ。2026-11-16 A）
+  // 2026-11-17 C（1-3／3-3）：ループの停止・再開の整理。rAF自体は止めず、
+  // update() は state==="play" のときだけ進む（止まっている間はタイマー・
+  // 物理が凍る）。一時停止中は蹴散らしの飛び散りも止めて場面を凍らせる。
+  // 復帰時の巨大dtは、再開時の frame.last リセット（setState 内）と
+  // dt 上限 0.05 の二重で防ぐ。
+  if (state !== "pause") stepScatter(dt); // 蹴散らしたコーン・荷物の飛び散り（描画だけ。2026-11-16 A）
   syncWorld();
   syncUI();
   renderer.render(scene, camera);
 }
 /* 自動テスト用のデバッグフック（画面には出ない。2D版と同一） */
-window.__demae = { start, steerTo,
-  get state() { return state; }, get t() { return t; }, get dist() { return dist; },
+window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange: onVisibilityChange,
+  get state() { return state; }, get paused() { return state === "pause"; }, get t() { return t; }, get dist() { return dist; },
   get speed() { return speed; }, get theta() { return theta; }, get sway() { return sway; },
   get laneX() { return laneX; }, get steerTarget() { return steerTarget; },
   get bank() { return bank; },
