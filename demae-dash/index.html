@@ -218,6 +218,46 @@ let btnBrake = false, btnPeek = false; // 入力ソース別（毎フレーム�
 let goalT = 0, failMsg = "";
 const GOAL_DIST = COURSE.goalDist, CHECK_X = COURSE.checkpoint, STEP_X = COURSE.step, JUMP_X = COURSE.jump; // コースJSONから読む（2026-11-08 C回にデータ化）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
+// ---------- 物理パラメータ（2026-11-17 B回・キュー 4-1） ----------
+// 塔の物理・速度・衝撃・しきい値の主要な数値をここに集める。値は従来どおり
+// （分離前後で自動走行20シナリオの数値が一致することを確認済み）。
+// 調整するときはここだけを変える。描画だけの係数（バンク角・塔の描画倍率・
+// カメラの揺れなど）は含めない。コースの数値（距離・位置）は course.json 側。
+const PHYS = {
+  // 塔の傾き（倒立振り子＋バネ）：omega += (-spring*theta - damp*omega + drive) * dt
+  spring: 16, damp: 5.5, thetaMax: 1.3,
+  // 横の揺れ（sway）：swayV += (-swaySpring*sway - swayDamp*swayV + latA*swayInput*peekGain) * dt
+  // 空中は運転入力が伝わらず、バネと減衰だけ（swayDampAir）
+  swaySpring: 12, swayDampAir: 4.5, swayDamp: 3.2, swayInput: 0.035,
+  // 運転入力→傾き：ブレーキで前へ、加速で後ろへ（accelDrive は負の値）、進路変更の横揺れ
+  brakeDrive: 4.0, accelDrive: -1.1, latDrive: 0.02,
+  // のぞき中は片手運転で余計に揺れる（peekGain = 1 + peekF * peekGainK）
+  peekGainK: 0.6,
+  // 失敗3段階のしきい値：猪口／滑落／崩壊
+  chokoTheta: 0.30, slipTheta: 0.35, collapseTheta: 0.44,
+  // カタカタの予告（傾きがこの値を越えると鳴る・表示が残る）
+  kataTheta: 0.18,
+  // 滑落後の無敵と角速度の減衰
+  slipInvuln: 1.6, slipOmegaDamp: 0.4,
+  // 速度：上限は走り出し speedBase から speedRise/秒で上がり speedCap まで
+  speedBase: 170, speedRise: 1.8, speedCap: 230,
+  accel: 95, brakeDecel: 260, // 加速・ブレーキの加減速（/秒）
+  // 初回限定スロー：slowTime 秒だけ上限を slowFactor 倍にする
+  slowTime: 6, slowFactor: 0.6,
+  // ハンドル：車線のなめらかな移動とキーの切る速さ（/秒）
+  laneEase: 6, keySteerRate: 200,
+  // 段差・障害物・着地の衝撃（角速度へ加える）：base + speed * perSpeed
+  stepJolt: 0.4, stepJoltPerSpeed: 0.003,
+  lightJolt: 0.15, lightJoltPerSpeed: 0.001, // 軽い障害物（コーン・荷物）
+  landJolt: 0.9, landJoltPerSpeed: 0.0075,   // ジャンプの着地
+  // ジャンプ：飛行時間と高さ（離陸時の速度で決まる）
+  airBase: 0.45, airPerSpeed: 0.0025, jumpHeightBase: 0.35, jumpHeightPerSpeed: 0.002,
+  // 軽トラの跳ね返り：後ろへ knockback、硬直 stun、点滅 blink
+  truckKnockback: 90, truckStun: 0.6, truckBlink: 1.2,
+  // 軽トラのヒント：2回目以降は強い文言・長く表示、3回目以降は横へ押し出す
+  truckHintFirst: 2.5, truckHintRepeat: 4.0, truckHintStrongFrom: 2,
+  truckNudge: 30, truckNudgeFrom: 3,
+};
 // ---------- 障害物（2026-11-05 ユーザー決定。進路変更を強いる。2026-11-05 C回で実装） ----------
 // 位置は鳥居(2900)・段差(3200)・ジャンプ台(4600)から離し、衝撃が重ならないようにする。
 // 当たった場合の衝撃は段差と同程度（0.4 + speed*0.003）を角速度へ加える流儀で、
@@ -319,7 +359,7 @@ function engineStart() {
 }
 function engineUpdate() {
   if (!engineOsc) return;
-  const f = Math.min(1, Math.max(0, speed / 230)); // 2026-11-16 A：上限230に合わせる
+  const f = Math.min(1, Math.max(0, speed / PHYS.speedCap)); // 2026-11-16 A：上限230に合わせる
   engineOsc.frequency.value = 55 + speed * 0.45; // 巡航170で約132Hz、全開230で約159Hz
   engineGain.gain.value = state === "play" ? 0.016 + f * 0.02 : 0;
   windFilter.frequency.value = 300 + speed * 4;
@@ -418,7 +458,7 @@ function start() {
   state = "play"; t = 0; dist = 0; speed = 0; laneX = 0; steerTarget = 0;
   theta = 0; omega = 0; sway = 0; swayV = 0; bank = 0; plates = 5; choko = true;
   chokoFall = -1; slipFall = -1; collapseT = -1; collapseSim = null; invuln = 0; shake = 0; hop = 0; truckHintT = 0; blinkT = 0; stunT = 0; slipDir = 1; chokoDir = 1; slipHintT = 0; chokoHintT = 0;
-  stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? 6 : 0; goalT = 0; failMsg = ""; truckHintDir = "右"; truckStreak = 0;
+  stepDone = false; jumpDone = false; airT = -1; jumpY = 0; slowT = firstRun ? PHYS.slowTime : 0; goalT = 0; failMsg = ""; truckHintDir = "右"; truckStreak = 0;
   checkpointDone = false; checkpointT = 0; checkpointShow = 0;
   for (const o of OBSTACLES) o.hit = false; obstacleHits = 0; resetScatter(); // 蹴散らした部品も元の位置へ戻す（2026-11-16 A）
   engineStart(); // エンジン音と風の音を始める（タイトル・ゴール・失敗時は無音）
@@ -431,7 +471,7 @@ function update(dt) {
   braking = btnBrake || !!keys["Space"];
   peeking = btnPeek || !!keys["KeyP"];
   peekF += ((peeking ? 1 : 0) - peekF) * Math.min(1, dt * 8);
-  const slowF = slowT > 0 ? 0.6 : 1; if (slowT > 0) slowT -= dt;
+  const slowF = slowT > 0 ? PHYS.slowFactor : 1; if (slowT > 0) slowT -= dt;
   // アクセル自動化（2026-11-07 ユーザー決定。2026-11-06の長押しアクセルは廃止）：
   // 上限速度は走り出し170から1秒に1.8ずつ上がり、33.3秒で230に達する。
   // 2026-11-16 A回：中間レビューでのユーザーの実機感想「簡単すぎるな。
@@ -440,10 +480,10 @@ function update(dt) {
   // （約23秒地点）では約210になる。速くなるほど段差・着地の衝撃が大きい
   // 既存の速度依存が、そのまま速さの代償になる（新しいペナルティは足さない）。
   // ブレーキで速度を落とす判断が中心になる。塔の物理の核・しきい値は無変更。
-  const vmax = (170 + Math.min(60, t * 1.8)) * slowF;
-  if (braking) speed = Math.max(0, speed - 260 * dt);
+  const vmax = (PHYS.speedBase + Math.min(PHYS.speedCap - PHYS.speedBase, t * PHYS.speedRise)) * slowF;
+  if (braking) speed = Math.max(0, speed - PHYS.brakeDecel * dt);
   else if (stunT > 0) speed = 0; // 跳ね返された直後はしばらく動かない（2026-11-12 Bの追記。速度0が表示で読めるようにするため。硬直中は加速しない）
-  else speed = Math.min(vmax, speed + 95 * dt);
+  else speed = Math.min(vmax, speed + PHYS.accel * dt);
   const prevDist = dist; // 障害物の連続判定用：このフレームの始点
   dist += speed * dt;
 
@@ -452,20 +492,20 @@ function update(dt) {
   if (checkpointShow > 0) checkpointShow = Math.max(0, checkpointShow - dt);
 
   // ジャンプ台（地形。段差の発展としてゴール手前に1つ置く。ボタンジャンプではない）
-  if (!jumpDone && airT < 0 && dist >= JUMP_X) { jumpDone = true; airT = 0; airDur = 0.45 + speed * 0.0025; jumpSpeed = speed; }
+  if (!jumpDone && airT < 0 && dist >= JUMP_X) { jumpDone = true; airT = 0; airDur = PHYS.airBase + speed * PHYS.airPerSpeed; jumpSpeed = speed; }
 
   // ハンドル（ドラッグ／キー）：キーを押しっぱなしにしている間は目標位置が滑らかに動く
   // （1秒で200＝車線2つ分強。指を離したときと同様、横位置は中央へ自動では戻らない）。
   // ドラッグ中は pointermove が目標位置を直接動かす。どちらも同じ steerTarget を使う。
-  if (keys["ArrowLeft"]) steerTarget = Math.max(-STEER_LIMIT, steerTarget - 200 * dt);
-  if (keys["ArrowRight"]) steerTarget = Math.min(STEER_LIMIT, steerTarget + 200 * dt);
+  if (keys["ArrowLeft"]) steerTarget = Math.max(-STEER_LIMIT, steerTarget - PHYS.keySteerRate * dt);
+  if (keys["ArrowRight"]) steerTarget = Math.min(STEER_LIMIT, steerTarget + PHYS.keySteerRate * dt);
 
   // 車線のなめらかな移動（横方向の加速度が揺れになる）
   const targetX = steerTarget;
   const prevX = laneX;
-  laneX += (targetX - laneX) * Math.min(1, dt * 6);
+  laneX += (targetX - laneX) * Math.min(1, dt * PHYS.laneEase);
   const latA = (laneX - prevX) / Math.max(dt, 1e-4);
-  const peekGain = 1 + peekF * 0.6; // 覗いている間は片手運転で余計に揺れる
+  const peekGain = 1 + peekF * PHYS.peekGainK; // 覗いている間は片手運転で余計に揺れる
 
   // 塔の物理：傾きは運転入力だけで決まる（独りでに揺れる仕様はなし）
   // 調整根拠（2D版の自動走行テスト）：通常走行の最大傾きは約0.11、
@@ -475,16 +515,16 @@ function update(dt) {
   const airborne = airT >= 0;
   let drive = 0;
   if (!airborne) {
-    if (braking) drive += 4.0;            // ブレーキで前へ傾く
-    else if (speed < vmax - 1 && stunT <= 0) drive -= 1.1; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）。硬直中は加速していない（止まっているバイクは加速していない）ので、後ろ傾きを入れない。入れると衝突の前傾きを打ち消して塔がほとんど揺れなくなるため（壁のときと同じ理由）。
-    drive += latA * 0.02 * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
+    if (braking) drive += PHYS.brakeDrive;            // ブレーキで前へ傾く
+    else if (speed < vmax - 1 && stunT <= 0) drive += PHYS.accelDrive; // 加速で後ろへ傾く（上限が上がり続けるので、走行中はほぼ常に少し後ろへ傾く）。硬直中は加速していない（止まっているバイクは加速していない）ので、後ろ傾きを入れない。入れると衝突の前傾きを打ち消して塔がほとんど揺れなくなるため（壁のときと同じ理由）。
+    drive += latA * PHYS.latDrive * peekGain;      // 進路変更の横揺れ（単独では猪口に届かず、ブレーキとの複合で滑落・崩壊に届く強さ）
   }
-  omega += (-16 * theta - 5.5 * omega + drive) * dt;
+  omega += (-PHYS.spring * theta - PHYS.damp * omega + drive) * dt;
   theta += omega * dt;
-  if (airborne) swayV += (-12 * sway - 4.5 * swayV) * dt;
-  else swayV += (-12 * sway - 3.2 * swayV + latA * 0.035 * peekGain) * dt; // 2026-11-11 B：グラグラをさらに強める（入力 0.020→0.035。実画面で滑らかなドラッグの見かけの傾きが 3〜5°しかなかったため。プローブ S：maxSway 0.171→約0.30、見かけの傾き 3.4°→約7.7°の見込み。sway は見た目だけ。theta の latA 係数 0.02 は据え置き）
+  if (airborne) swayV += (-PHYS.swaySpring * sway - PHYS.swayDampAir * swayV) * dt;
+  else swayV += (-PHYS.swaySpring * sway - PHYS.swayDamp * swayV + latA * PHYS.swayInput * peekGain) * dt; // 2026-11-11 B：グラグラをさらに強める（入力 0.020→0.035。実画面で滑らかなドラッグの見かけの傾きが 3〜5°しかなかったため。プローブ S：maxSway 0.171→約0.30、見かけの傾き 3.4°→約7.7°の見込み。sway は見た目だけ。theta の latA 係数 0.02 は据え置き）
   sway += swayV * dt;
-  theta = Math.max(-1.3, Math.min(1.3, theta));
+  theta = Math.max(-PHYS.thetaMax, Math.min(PHYS.thetaMax, theta));
 
   // バイクのバンク（2026-11-14 A回。ユーザー指摘「蕎麦だけじゃなくて、バイクも傾かないと変だね」）。
   // 描画のみ：塔の物理の核・しきい値・失敗3段階には触れない。横移動の勢い（latA）に連動し、
@@ -497,7 +537,7 @@ function update(dt) {
 
   // 小さな段差：1回だけの衝撃（いきなり崩壊する段差は置かない）。
   // 衝撃は速度依存：ゆっくり越えれば小さく、全速だと大きい
-  if (!stepDone && dist >= STEP_X) { stepDone = true; omega += 0.4 + speed * 0.003; hop = 1; }
+  if (!stepDone && dist >= STEP_X) { stepDone = true; omega += PHYS.stepJolt + speed * PHYS.stepJoltPerSpeed; hop = 1; }
   if (hop > 0) hop = Math.max(0, hop - dt * 3);
 
   // 障害物：進路変更を強いる。避ければ何も起きず、当たったら段差と同じ流儀で
@@ -562,20 +602,20 @@ function update(dt) {
         // 消費しない（通り過ぎてしまえば下の else if で消費する）。
         // 3段階の無敵（invuln）は立てない（上記の見直しを参照）。
         obstacleHits++;
-        omega += 0.4 + speed * 0.003; hop = 1; noiseBurst(0.2, 0.2, 800);
-        dist = o.x - halfLen - BIKE_HALF_LEN - 90; // 接触点の約1.5m後ろへ跳ね返る
+        omega += PHYS.stepJolt + speed * PHYS.stepJoltPerSpeed; hop = 1; noiseBurst(0.2, 0.2, 800);
+        dist = o.x - halfLen - BIKE_HALF_LEN - PHYS.truckKnockback; // 接触点の約1.5m後ろへ跳ね返る
         speed = 0;
-        stunT = 0.6; // しばらく動かない（2026-11-12 Bの追記。実画面のブラウザ確認で、跳ね返りが1フレームの後退＋即再加速では読めず、壁に張りついたように見えたため。速度0が0.6秒読め、跳ね返った位置で止まることで、跳ね返りが目に見えるリズムになる）
-        blinkT = 1.2; // 点滅（描画は syncWorld で bike.visible を点滅）
+        stunT = PHYS.truckStun; // しばらく動かない（2026-11-12 Bの追記。実画面のブラウザ確認で、跳ね返りが1フレームの後退＋即再加速では読めず、壁に張りついたように見えたため。速度0が0.6秒読め、跳ね返った位置で止まることで、跳ね返りが目に見えるリズムになる）
+        blinkT = PHYS.truckBlink; // 点滅（描画は syncWorld で bike.visible を点滅）
         truckStreak++; // 同じ軽トラへの連続衝突。走行を始めたら0に戻る（start()）。
         truckHintDir = laneX < 0 ? "左" : "右"; // 2026-11-16 B：方向つきヒント。真後ろに張り付いて跳ね返りを繰り返す走行（11-14 C・11-16 Aで観測）では「ドラッグでよけよう」だけではどちらへ逃げればいいか読めないため、今いる側＝抜けやすい側を指す。中央ちょうど（laneX=0）のときは右を指す。
         // 2026-11-16 C：張り付きの手当て。2回目以降はヒントを強くする（「何度もぶつかっています」を付け、表示も2.5秒→4.0秒に延ばす）。
         // 3回目以降は、跳ね返りと同時にハンドルの目標位置をヒント方向へ30ずつずらす（上限は隣の車線の中心±90。軽トラの半幅70を越えるので脇に出られる）。
         // プレイヤーが既に車線の中心まで切っている（|steerTarget|>=90）ときは押し出さない（プレイヤーの操作と競合させない）。
         // 塔の物理の核・しきい値・失敗3段階・当たり判定は無変更（steerTarget はドラッグ／キーと同じ入力の目標値で、theta への入力経路は変わらない）。
-        truckHintT = truckStreak >= 2 ? 4.0 : 2.5;
-        if (truckStreak >= 3 && Math.abs(steerTarget) < 90) {
-          steerTarget = Math.max(-90, Math.min(90, steerTarget + (truckHintDir === "左" ? -30 : 30)));
+        truckHintT = truckStreak >= PHYS.truckHintStrongFrom ? PHYS.truckHintRepeat : PHYS.truckHintFirst;
+        if (truckStreak >= PHYS.truckNudgeFrom && Math.abs(steerTarget) < 90) {
+          steerTarget = Math.max(-90, Math.min(90, steerTarget + (truckHintDir === "左" ? -PHYS.truckNudge : PHYS.truckNudge)));
         }
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       } else {
@@ -586,7 +626,7 @@ function update(dt) {
         // 跳ね返り＋スタン。塔の物理の核・しきい値・失敗3段階は無変更。
         o.hit = true;
         obstacleHits++;
-        omega += 0.15 + speed * 0.001; hop = 1; noiseBurst(0.2, 0.2, 800);
+        omega += PHYS.lightJolt + speed * PHYS.lightJoltPerSpeed; hop = 1; noiseBurst(0.2, 0.2, 800);
         initScatter(o);
         hitJolt = 1; shake = Math.max(shake, 8); // 描画のみ：当たった瞬間の揺れと画面のぶれ。物理には触れない。
       }
@@ -612,20 +652,20 @@ function update(dt) {
   // 着地で滑落・崩壊に進むこともある（3段階の範囲内）。
   if (airT >= 0) {
     airT += dt;
-    jumpY = Math.sin(Math.PI * Math.min(1, airT / airDur)) * (0.35 + jumpSpeed * 0.002);
-    if (airT >= airDur) { airT = -1; jumpY = 0; omega += 0.9 + jumpSpeed * 0.0075; hop = Math.max(hop, 0.6); noiseBurst(0.15, 0.15, 700); }
+    jumpY = Math.sin(Math.PI * Math.min(1, airT / airDur)) * (PHYS.jumpHeightBase + jumpSpeed * PHYS.jumpHeightPerSpeed);
+    if (airT >= airDur) { airT = -1; jumpY = 0; omega += PHYS.landJolt + jumpSpeed * PHYS.landJoltPerSpeed; hop = Math.max(hop, 0.6); noiseBurst(0.15, 0.15, 700); }
   }
 
   if (invuln > 0) invuln -= dt;
   const a = Math.abs(theta);
   // カタカタ：傾き連動の予告音（猪口のしきい値より手前から鳴る）
-  if (a > 0.18) { kataAcc += dt; const iv = Math.max(0.06, 0.3 - a * 0.22);
+  if (a > PHYS.kataTheta) { kataAcc += dt; const iv = Math.max(0.06, 0.3 - a * 0.22);
     if (kataAcc > iv) { kataAcc = 0; noiseBurst(0.03, 0.12, 1800); } }
-  if (a > 0.18) shake = Math.min(6, a * 8); else shake = Math.max(0, shake - dt * 20);
+  if (a > PHYS.kataTheta) shake = Math.min(6, a * 8); else shake = Math.max(0, shake - dt * 20);
   // 「カタカタ…」の表示だけ、しきい値を割った後も0.9秒残す（見た目のみ。
   // 傾きの振動はしきい値をまたぐため、静止画では一瞬しか読めなかった対策）。
   // 物理・しきい値・音の条件は変えていない。
-  if (a > 0.18) kataHold = 0.9; else kataHold = Math.max(0, kataHold - dt);
+  if (a > PHYS.kataTheta) kataHold = 0.9; else kataHold = Math.max(0, kataHold - dt);
 
   // 失敗3段階（回復可能 → 滑落 → 崩壊）
   // しきい値：猪口0.30／滑落0.35／崩壊0.44（通常走行の最大約0.11より十分上、
@@ -634,9 +674,9 @@ function update(dt) {
   // 判定は大きい方から行う：傾きはフレームごとに徐々に育つので、
   // 実際には猪口→滑落→崩壊の順に一段ずつ進む
   if (invuln <= 0) {
-    if (a > 0.44) { state = "fail"; collapseT = 0; failMsg = "塔が崩れてしまった…"; thud(); noiseBurst(0.5, 0.3, 500); }
-    else if (a > 0.35 && plates > 0) { plates--; slipFall = 0; slipDir = sway >= 0 ? 1 : -1; slipHintT = 2.0; invuln = 1.6; omega *= 0.4; noiseBurst(0.25, 0.2, 900); }
-    else if (choko && a > 0.30) { choko = false; chokoFall = 0; chokoDir = sway >= 0 ? 1 : -1; chokoHintT = 1.5; noiseBurst(0.15, 0.15, 2400); } // 猪口＝警告役、最初に滑る
+    if (a > PHYS.collapseTheta) { state = "fail"; collapseT = 0; failMsg = "塔が崩れてしまった…"; thud(); noiseBurst(0.5, 0.3, 500); }
+    else if (a > PHYS.slipTheta && plates > 0) { plates--; slipFall = 0; slipDir = sway >= 0 ? 1 : -1; slipHintT = 2.0; invuln = PHYS.slipInvuln; omega *= PHYS.slipOmegaDamp; noiseBurst(0.25, 0.2, 900); }
+    else if (choko && a > PHYS.chokoTheta) { choko = false; chokoFall = 0; chokoDir = sway >= 0 ? 1 : -1; chokoHintT = 1.5; noiseBurst(0.15, 0.15, 2400); } // 猪口＝警告役、最初に滑る
   }
   if (chokoFall >= 0) chokoFall += dt;
   if (slipFall >= 0) slipFall += dt;
