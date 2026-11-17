@@ -146,10 +146,12 @@ window.__demaeBooted = true;
 // ---------- コースデータ（JSON。course.json が正本で、ここには同じ内容を埋め込む） ----------
 // 編集は course-editor.html で行い、node sync-course.js で埋め込み直す。
 // ?course=local のときだけ、エディタが localStorage に置いた編集中コースを読む（試走用）。
-// 読み込みに失敗した場合は従来のコース（直線・上り坂つき）と同一の既定値を使う。
+// 読み込みに失敗した場合は course.json と同一の既定値を使う。
+// （course.json の写し。正本は course.json。check-course-sync.js が一致を確かめる）
 const COURSE_DEFAULT = { goalDist: 5800, checkpoint: 2900, step: 3200, jump: 4600,
-  elevation: [{ d: 0, h: 0 }, { d: 800, h: 0 }, { d: 2600, h: 5 }, { d: 5800, h: 5 }],
-  centerline: [{ d: 0, x: 0 }, { d: 5800, x: 0 }],
+  name: "コース初版 v1.1（下り強調・標高16）", version: 3,
+  elevation: [{ d: 0, h: 16 }, { d: 1200, h: 14 }, { d: 2600, h: 8 }, { d: 3800, h: 3 }, { d: 4600, h: 0 }, { d: 5800, h: 0 }],
+  centerline: [{ d: 0, x: 0 }, { d: 1000, x: 0 }, { d: 1800, x: -2.6 }, { d: 2600, x: 0 }, { d: 3400, x: 2.8 }, { d: 4400, x: 0 }, { d: 5800, x: 0 }],
   obstacles: [
     { x: 1400, lane: 1, halfW: 70, type: "truck" },
     { x: 2100, lane: 2, halfW: 70, type: "cones" },
