@@ -54,7 +54,7 @@
   #pad button { font-size:20px; padding:14px 20px; border-radius:999px; border:0;
     background:#fff7e6; color:#333; box-shadow:0 3px 0 #c9a86a; touch-action:manipulation; }
   #bBrake { font-size:23px; padding:18px 30px; background:#ffe1a8; }
-  #bPause { font-size:18px; padding:14px 18px; background:#e8f4ff; } /* 2026-11-17 C（3-3）：一時停止ボタン。走行中・一時停止中だけ表示 */
+  #bPause, #bMute { font-size:18px; padding:14px 18px; background:#e8f4ff; } /* 2026-11-17 C（3-3）：一時停止ボタン。走行中・一時停止中だけ表示。bMute は 2026-11-18 A（6-1）で同じ見た目 */
   #pad button:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
   #pad button.hold { background:#ffd166; }
   #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px;
@@ -103,13 +103,14 @@
   <div id="pad">
     <div class="padGroup">
       <button id="bPause">⏸ 一時停止</button>
+      <button id="bMute">🔊 音あり</button>
     </div>
     <div class="padGroup">
       <button id="bPeek">のぞく（長押し）</button>
       <button id="bBrake">ブレーキ（長押し）</button>
     </div>
   </div>
-  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦／Esc＝一時停止<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
+  <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦／Esc＝一時停止／M＝音のオン／オフ<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
 </div>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
@@ -360,8 +361,20 @@ function centerDeriv(d) { // 中心線の傾き（3D単位/dist。道路の板�
 
 // ---------- 音（2D版のWebAudio合成を流用） ----------
 let AC = null;
+// ---------- 音のオン／オフ（2026-11-18 A回・キュー 6-1） ----------
+// ミュート中は音を出さないだけ（物理・しきい値・ゲームの数値には触れない）。
+// 設定は localStorage（demae-muted）に残し、次に開いたときも同じままにする。
+// 音の出どころは4か所（noiseBurst／thud／checkpointSound／engineUpdate）
+// だけなので、入口で muted を見る形にそろえた。AudioContext 自体は作った
+// ままにし、engineUpdate のゲインを0にすることで即座に無音になる。
+let muted = false;
+try { muted = localStorage.getItem("demae-muted") === "1"; } catch (e) {}
+function syncMuteBtn() { const b = document.getElementById("bMute"); if (b) b.textContent = muted ? "🔇 音なし" : "🔊 音あり"; }
+function setMuted(m) { muted = !!m; try { localStorage.setItem("demae-muted", muted ? "1" : "0"); } catch (e) {} syncMuteBtn(); }
+function toggleMute() { setMuted(!muted); }
 function ac() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (AC && AC.state === "suspended") AC.resume(); return AC; }
 function noiseBurst(dur, vol, freq) {
+  if (muted) return;
   const a = ac(); if (!a) return;
   const n = a.sampleRate * dur, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
@@ -370,11 +383,11 @@ function noiseBurst(dur, vol, freq) {
   const g = a.createGain(); g.gain.value = vol;
   src.connect(f); f.connect(g); g.connect(a.destination); src.start();
 }
-function thud() { const a = ac(); if (!a) return; const o = a.createOscillator(), g = a.createGain();
+function thud() { if (muted) return; const a = ac(); if (!a) return; const o = a.createOscillator(), g = a.createGain();
   o.type = "sine"; o.frequency.setValueAtTime(120, a.currentTime); o.frequency.exponentialRampToValueAtTime(40, a.currentTime + 0.25);
   g.gain.setValueAtTime(0.25, a.currentTime); g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.3);
   o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.3); }
-function checkpointSound() { const a = ac(); if (!a) return; // チェックポイント通過の短い2音（合成音のみ）
+function checkpointSound() { if (muted) return; const a = ac(); if (!a) return; // チェックポイント通過の短い2音（合成音のみ）
   [880, 1318].forEach((fr, i) => { const o = a.createOscillator(), g = a.createGain(); const t0 = a.currentTime + i * 0.09;
     o.type = "sine"; o.frequency.setValueAtTime(fr, t0);
     g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
@@ -403,9 +416,9 @@ function engineUpdate() {
   if (!engineOsc) return;
   const f = Math.min(1, Math.max(0, speed / PHYS.speedCap)); // 2026-11-16 A：上限230に合わせる
   engineOsc.frequency.value = 55 + speed * 0.45; // 巡航170で約132Hz、全開230で約159Hz
-  engineGain.gain.value = state === "play" ? 0.016 + f * 0.02 : 0;
+  engineGain.gain.value = (state === "play" && !muted) ? 0.016 + f * 0.02 : 0;
   windFilter.frequency.value = 300 + speed * 4;
-  windGain.gain.value = state === "play" ? f * f * 0.04 : 0;
+  windGain.gain.value = (state === "play" && !muted) ? f * f * 0.04 : 0;
 }
 
 // ---------- 入力（2D版と同一。対象要素が canvas → #gl に変わるだけ） ----------
@@ -414,6 +427,7 @@ const keys = {};
 addEventListener("keydown", e => {
   if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
   if (e.repeat) return; keys[e.code] = true;
+  if (e.code === "KeyM") { toggleMute(); return; } // 2026-11-18 A（6-1）：Mで音のオン／オフ
   // ←→は押しっぱなしで滑らかに切れる（目標位置を update() で動かす）。離散の進路変更は廃止。
   if (e.code === "Escape") { if (state === "play") pause(); else if (state === "pause") resume(); return; } // 2026-11-17 C（3-3）：Escで一時停止・再開
   if (e.code === "Enter" || e.code === "Space") { if (state === "title" || state === "pause" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) { if (state === "pause") resume(); else start(); } } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
@@ -452,6 +466,9 @@ holdBtn(document.getElementById("bBrake"), () => btnBrake = true, () => btnBrake
 holdBtn(document.getElementById("bPeek"), () => btnPeek = true, () => btnPeek = false);
 const bPauseEl = document.getElementById("bPause"); // 2026-11-17 C（3-3）：一時停止ボタン。タップで止める／つづける。長押しボタンではないので click で受ける。
 bPauseEl.addEventListener("click", () => { ac(); if (state === "play") pause(); else if (state === "pause") resume(); });
+const bMuteEl = document.getElementById("bMute"); // 2026-11-18 A（6-1）：音のオン／オフ。タイトル画面でも押せる（走行前から消しておける）。
+bMuteEl.addEventListener("click", () => { toggleMute(); });
+syncMuteBtn(); // 保存されていた設定があれば表示を合わせる
 // ---------- ハンドルのドラッグ操作（2026-11-10 ユーザー指示。マリオカートツアー式） ----------
 // 相対ドラッグ：指を置いた場所が起点で、そこからの水平の動きでハンドルが切れる。
 // 横位置は車線スナップなしの連続値。指を離したらハンドルは真っ直ぐ側へ戻る
@@ -1761,6 +1778,7 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   get blinkT() { return blinkT; },
   get truckHintT() { return truckHintT; }, get truckHintDir() { return truckHintDir; },
   get truckStreak() { return truckStreak; },
+  get muted() { return muted; }, toggleMute, setMuted,
   get satisfaction() { return satisfaction(); }, get rank() { return rank(); },
   get grade() { return grade(); }, get nobiPct() { return nobiPct(); },
   get grandmaReaction() { return grandmaReaction(); },
