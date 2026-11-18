@@ -13,6 +13,18 @@
     border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.45); touch-action:none; background:#7ec8f7; }
   #gl canvas { display:block; width:100%; height:100%; }
   .overlay { position:absolute; pointer-events:none; }
+  /* 2026-11-18 B：速度線（マッハ感の演出）。画面の左右の端にだけ白い筋を流す。
+     速いときだけうっすら出て、中央の塔の読み取りは邪魔しない。表示だけの変更。 */
+  #speedFx { inset:0; display:none; z-index:2; opacity:0;
+    background:
+      repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px),
+      repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px);
+    background-size:30% 200%, 30% 200%;
+    background-position:left top, right top; background-repeat:repeat;
+    -webkit-mask-image:linear-gradient(90deg, #000 0 24%, transparent 24% 76%, #000 76% 100%);
+    mask-image:linear-gradient(90deg, #000 0 24%, transparent 24% 76%, #000 76% 100%);
+    animation:speedFxFlow .32s linear infinite; }
+  @keyframes speedFxFlow { from { background-position-y:0, 0; } to { background-position-y:68px, 68px; } }
   #hud { top:12px; left:12px; background:rgba(0,0,0,.45); border-radius:10px; padding:10px 14px; color:#fff;
     font-size:15px; line-height:1.5; min-width:270px; max-width:430px; display:none; }
   /* 2026-11-06 B回：max-widthを追加。距離の行（速度／ゴール／鳥居／段差／障害物）が
@@ -83,6 +95,7 @@
 <body>
 <div id="wrap">
   <div id="gl">
+    <div id="speedFx" class="overlay"></div>
     <div id="hud" class="overlay">
       <div class="big" id="hudTime">タイム 0.0秒</div>
       <div class="big" id="hudPlates">ざる 5枚 ・ できたて！</div>
@@ -283,7 +296,11 @@ const PHYS = {
   // 滑落後の無敵と角速度の減衰
   slipInvuln: 1.6, slipOmegaDamp: 0.4,
   // 速度：上限は走り出し speedBase から speedRise/秒で上がり speedCap まで
-  speedBase: 170, speedRise: 1.8, speedCap: 230,
+  // 2026-11-18 B（ユーザー指示「もっともっとスピード感ほしい。マッハで配達に
+  // 命を懸ける世界観でいい」）：上昇率 1.8→2.4、上限 230→260。きれいな走行は
+  // 30.2秒→約27秒になる見込み。着地の衝撃は速度依存のため、着地ピークが猪口の
+  // しきい値 0.30 に近づきすぎないか自動走行で確かめること。
+  speedBase: 170, speedRise: 2.4, speedCap: 260,
   accel: 95, brakeDecel: 260, // 加速・ブレーキの加減速（/秒）
   // 初回限定スロー：slowTime 秒だけ上限を slowFactor 倍にする
   slowTime: 6, slowFactor: 0.6,
@@ -292,7 +309,9 @@ const PHYS = {
   // 段差・障害物・着地の衝撃（角速度へ加える）：base + speed * perSpeed
   stepJolt: 0.4, stepJoltPerSpeed: 0.003,
   lightJolt: 0.15, lightJoltPerSpeed: 0.001, // 軽い障害物（コーン・荷物）
-  landJolt: 0.9, landJoltPerSpeed: 0.0075,   // ジャンプの着地
+  landJolt: 0.9, landJoltPerSpeed: 0.0065,   // ジャンプの着地（2026-11-18 B：0.0075→0.0065。
+  // 速度が上がった分だけ着地の衝撃も大きくなるため、速度係数を下げて着地ピークを
+  // 従来どおり（きれいな走行で約0.27〜0.28）に保つ。しきい値 0.30 との余裕を守る）
   // ジャンプ：飛行時間と高さ（離陸時の速度で決まる）
   airBase: 0.45, airPerSpeed: 0.0025, jumpHeightBase: 0.35, jumpHeightPerSpeed: 0.002,
   // 軽トラの跳ね返り：後ろへ knockback、硬直 stun、点滅 blink
@@ -415,10 +434,10 @@ function engineStart() {
 function engineUpdate() {
   if (!engineOsc) return;
   const f = Math.min(1, Math.max(0, speed / PHYS.speedCap)); // 2026-11-16 A：上限230に合わせる
-  engineOsc.frequency.value = 55 + speed * 0.45; // 巡航170で約132Hz、全開230で約159Hz
-  engineGain.gain.value = (state === "play" && !muted) ? 0.016 + f * 0.02 : 0;
-  windFilter.frequency.value = 300 + speed * 4;
-  windGain.gain.value = (state === "play" && !muted) ? f * f * 0.04 : 0;
+  engineOsc.frequency.value = 55 + speed * 0.55; // 巡航170で約149Hz、全開260で約198Hz（2026-11-18 B：0.45→0.55。マッハ感のため音程も上げる）
+  engineGain.gain.value = (state === "play" && !muted) ? 0.016 + f * 0.028 : 0;
+  windFilter.frequency.value = 300 + speed * 5;
+  windGain.gain.value = (state === "play" && !muted) ? f * f * 0.07 : 0; // 2026-11-18 B：0.04→0.07。風切り音を強くする
 }
 
 // ---------- 入力（2D版と同一。対象要素が canvas → #gl に変わるだけ） ----------
@@ -1655,18 +1674,26 @@ function syncWorld() {
   // カメラ：バイクの後ろから前方。のぞくとカメラが横に寄り、塔が脇へずれて道が見える
   // 距離・高さ・注視点は fitViewport() が画角とともに向き対応した camParams を使う
   // スピード感の演出（2026-11-06 C回。物理・数値には触れない）：
-  // 速度が上がるほど視野角が広がり（最大+7°）、カメラがわずかに後ろへ引く（最大+0.6）。
-  // 振動はごく小さく（±0.02）、塔の傾きの読み取りを邪魔しない程度に留める。
-  const speedF = Math.min(1, Math.max(0, speed / 230)); // 2026-11-16 A：上限230に合わせる
+  // 速度が上がるほど視野角が広がり（最大+12°。2026-11-18 B：+7→+12）、カメラが
+  // わずかに後ろへ引く（最大+1.2。2026-11-18 B：0.6→1.2）。振動も少し強める
+  // （±0.035。塔の傾きの読み取りを邪魔しない程度に留める）。
+  const speedF = Math.min(1, Math.max(0, speed / PHYS.speedCap)); // 2026-11-18 B：上限260に合わせる（直書き230をやめる）
   const camX = bikeX * 0.55 + peekF * 1.5;
-  let cx = camX + Math.sin(t * 37) * 0.015 * speedF,
-      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.02 * speedF,
-      cz = camParams.dist + speedF * 0.6;
+  let cx = camX + Math.sin(t * 37) * 0.03 * speedF,
+      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.035 * speedF,
+      cz = camParams.dist + speedF * 1.2;
+  // 2026-11-18 B：速度線。速さが6割を越えたあたりから端にだけ筋が出る（最大で濃さ0.5）。
+  // 走行中だけ。タイトル・ゴール・失敗時は消す。
+  if (speedFxEl) {
+    const fx = state === "play" ? Math.max(0, (speedF - 0.55) / 0.45) * 0.5 : 0;
+    speedFxEl.style.display = fx > 0 ? "block" : "none";
+    speedFxEl.style.opacity = fx;
+  }
   if (shake > 0) { cx += (Math.random() - 0.5) * shake * 0.02; cy += (Math.random() - 0.5) * shake * 0.02; }
   camera.position.set(cx, cy, cz);
   // カーブの先へ視線を少し寄せる（道が曲がる先を読むため。中心線の700先との差の半分）
   camera.lookAt(bikeX * 0.45 + peekF * 0.2 + (centerX(dist + 700) - centerX(dist)) * 0.5, gy + camParams.lookY, -12);
-  camera.fov = camParams.fov + speedF * 7;
+  camera.fov = camParams.fov + speedF * 12;
   camera.updateProjectionMatrix();
 }
 
@@ -1674,6 +1701,7 @@ function syncWorld() {
 const hudEl = document.getElementById("hud"), hudTime = document.getElementById("hudTime"),
   hudPlates = document.getElementById("hudPlates"), hudBar = document.getElementById("hudBar"),
   hudNobi = document.getElementById("hudNobi"), hudDist = document.getElementById("hudDist"),
+  speedFxEl = document.getElementById("speedFx"), // 2026-11-18 B：速度線のオーバーレイ
   kataEl = document.getElementById("kata"), peekEl = document.getElementById("peekLabel"),
   cpEl = document.getElementById("cpMsg"),
   centerEl = document.getElementById("center"), centerTitle = document.getElementById("centerTitle"),
