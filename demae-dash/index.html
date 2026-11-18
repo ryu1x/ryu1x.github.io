@@ -15,7 +15,7 @@
   .overlay { position:absolute; pointer-events:none; }
   /* 2026-11-18 B：速度線（マッハ感の演出）。画面の左右の端にだけ白い筋を流す。
      速いときだけうっすら出て、中央の塔の読み取りは邪魔しない。表示だけの変更。 */
-  #speedFx { inset:0; display:none; z-index:2; opacity:0;
+  #speedFx { inset:0; display:none; opacity:0;
     background:
       repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px),
       repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px);
@@ -1733,7 +1733,10 @@ function syncUI() {
     if (truckHintT > 0) distText += " ・ 軽トラにぶつかった！ " + (truckStreak >= 2 ? "何度もぶつかっています。 " : "") + truckHintDir + "へドラッグしてよけよう"; // 跳ね返された直後のヒント（2026-11-12 B。2026-11-16 Bで方向つきに。2026-11-16 Cで2回目以降は強い文言に）
     if (chokoHintT > 0) distText += " ・ 猪口がすべり落ちた！"; // 滑落の合図（2026-11-13 A。落下の過程が実画面で見えにくいため、枚数表示の変化と合わせて読めるようにする）
     if (slipHintT > 0) distText += " ・ ざるが1枚すべり落ちた！";
-    hudDist.textContent = "速度 " + Math.round(speed * 0.6) + " / " + distText;
+    // 2026-11-18 B追記：距離の行は「・」の区切りごとに nowrap の span にし、
+    // 「障害物まで 1m」の途中で折り返さないようにする（ブラウザ確認での指摘。表示だけ）。
+    hudDist.innerHTML = "<span style=\"white-space:nowrap\">速度 " + Math.round(speed * 0.6) + "</span> / " +
+      distText.split(" ・ ").map(s => "<span style=\"white-space:nowrap\">" + s + "</span>").join(" ・ ");
     kataEl.style.display = kataHold > 0 ? "block" : "none";
     peekEl.style.display = peeking ? "block" : "none";
   }
