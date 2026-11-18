@@ -13,18 +13,11 @@
     border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,.45); touch-action:none; background:#7ec8f7; }
   #gl canvas { display:block; width:100%; height:100%; }
   .overlay { position:absolute; pointer-events:none; }
-  /* 2026-11-18 B：速度線（マッハ感の演出）。画面の左右の端にだけ白い筋を流す。
-     速いときだけうっすら出て、中央の塔の読み取りは邪魔しない。表示だけの変更。 */
-  #speedFx { inset:0; display:none; opacity:0;
-    background:
-      repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px),
-      repeating-linear-gradient(180deg, rgba(255,255,255,.5) 0 3px, transparent 3px 34px);
-    background-size:30% 200%, 30% 200%;
-    background-position:left top, right top; background-repeat:repeat;
-    -webkit-mask-image:linear-gradient(90deg, #000 0 24%, transparent 24% 76%, #000 76% 100%);
-    mask-image:linear-gradient(90deg, #000 0 24%, transparent 24% 76%, #000 76% 100%);
-    animation:speedFxFlow .32s linear infinite; }
-  @keyframes speedFxFlow { from { background-position-y:0, 0; } to { background-position-y:68px, 68px; } }
+  /* 2026-11-18 C：速度線は canvas に描く縦の筋へ作り直した（下の drawSpeedFx）。
+     旧版は CSS の横帯（repeating-linear-gradient 180deg）で、「横棒が
+     上から流れてきてる」と見え、速さの演出として失敗だったため廃止。
+     canvas の中身は JS が描き、ここは配置だけ。表示だけの変更。 */
+  #speedFx { inset:0; display:none; }
   #hud { top:12px; left:12px; background:rgba(0,0,0,.45); border-radius:10px; padding:10px 14px; color:#fff;
     font-size:15px; line-height:1.5; min-width:270px; max-width:430px; display:none; }
   /* 2026-11-06 B回：max-widthを追加。距離の行（速度／ゴール／鳥居／段差／障害物）が
@@ -95,7 +88,7 @@
 <body>
 <div id="wrap">
   <div id="gl">
-    <div id="speedFx" class="overlay"></div>
+    <canvas id="speedFx" class="overlay"></canvas>
     <div id="hud" class="overlay">
       <div class="big" id="hudTime">タイム 0.0秒</div>
       <div class="big" id="hudPlates">ざる 5枚 ・ できたて！</div>
@@ -1022,6 +1015,16 @@ for (let k = 0; k < 58; k++) {
     : box(0.2, 0.14, 0.2, 0xd8d2c4, 0, 0, 0);    // 白っぽい小石
   scene.add(stone); edgeMeshes.push({ mesh: stone, D: 50 + k * 100, side: (k % 2 === 0) ? -1 : 1 });
 }
+// 2026-11-18 C：小石を倍にする（間隔100→50）。道のすぐ脇を流れる物の
+// 数がそのまま「速さが目に入る量」になる。速くなったのに道端がまばらで
+// 速く見えなかったため、既存の列のあいだ（D=100, 200, …）にもう1列足す。
+// 左右は交互になるよう位相をずらす。コース座標に固定（11-12 Bの流儀）。
+for (let k = 0; k < 57; k++) {
+  const stone = k % 5 === 4
+    ? box(0.22, 0.22, 0.22, 0xe08a4a, 0, 0, 0)
+    : box(0.2, 0.14, 0.2, 0xd8d2c4, 0, 0, 0);
+  scene.add(stone); edgeMeshes.push({ mesh: stone, D: 100 + k * 100, side: (k % 2 === 0) ? 1 : -1 });
+}
 {
   const cols = [0xffd9d9, 0xfff0c2, 0xd9f2d9, 0xe3d7ff];
   for (let i = 0; i < 10; i++) {
@@ -1083,6 +1086,13 @@ const houseMeshes = [];
   for (let k = 0; k < 9; k++) {
     const m = makeHouse(cols[k % cols.length]);
     scene.add(m); houseMeshes.push({ mesh: m, D: 215 + k * 690, side: (k % 2 === 0) ? -1 : 1 });
+  }
+  // 2026-11-18 C：家も倍にする（間隔690→約345）。家がまばらで大きいと
+  // 景色の流れが読めず速く見えないため、既存の列のあいだ（D=560, 1250, …）
+  // にもう1列足す。左右は交互になるよう位相をずらす。コース座標に固定。
+  for (let k = 0; k < 8; k++) {
+    const m = makeHouse(cols[(k + 2) % cols.length]);
+    scene.add(m); houseMeshes.push({ mesh: m, D: 560 + k * 690, side: (k % 2 === 0) ? 1 : -1 });
   }
 }
 // ---------- 松月庵の店先（序盤に脇を通る） ----------
@@ -1678,22 +1688,25 @@ function syncWorld() {
   // わずかに後ろへ引く（最大+1.2。2026-11-18 B：0.6→1.2）。振動も少し強める
   // （±0.035。塔の傾きの読み取りを邪魔しない程度に留める）。
   const speedF = Math.min(1, Math.max(0, speed / PHYS.speedCap)); // 2026-11-18 B：上限260に合わせる（直書き230をやめる）
+  // 2026-11-18 C：見た目の速さの立ち上がり（visF）。速度そのもの（PHYS）は変えない。
+  // vmax は 2.4/秒でしか上がらないため speedF は走行の終盤まで 1 にならず、
+  // speedF に連動させていた視野角・カメラ引き・振動・速度線は最後まで弱い
+  // ままだった。visF は speedF 0.25 で立ち上がり 0.85 で最大になるので、
+  // 走り出しの数秒で演出がほぼ最大になり、速さの感じが早く来る。
+  // 最大値（視野角+12°・カメラ引き1.2・振動±0.035）は従来どおり。
+  const visF = Math.min(1, Math.max(0, (speedF - 0.25) / 0.6));
   const camX = bikeX * 0.55 + peekF * 1.5;
-  let cx = camX + Math.sin(t * 37) * 0.03 * speedF,
-      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.035 * speedF,
-      cz = camParams.dist + speedF * 1.2;
-  // 2026-11-18 B：速度線。速さが6割を越えたあたりから端にだけ筋が出る（最大で濃さ0.5）。
-  // 走行中だけ。タイトル・ゴール・失敗時は消す。
-  if (speedFxEl) {
-    const fx = state === "play" ? Math.max(0, (speedF - 0.55) / 0.45) * 0.5 : 0;
-    speedFxEl.style.display = fx > 0 ? "block" : "none";
-    speedFxEl.style.opacity = fx;
-  }
+  let cx = camX + Math.sin(t * 37) * 0.03 * visF,
+      cy = gy + camParams.height + peekF * 0.35 + Math.sin(t * 43) * 0.035 * visF,
+      cz = camParams.dist + visF * 1.2;
+  // 2026-11-18 C：速度線。visF が 0.15 を越えたあたりから端にだけ筋が出る
+  // （最大で濃さ0.5）。走行中だけ。タイトル・ゴール・失敗時は消す。
+  drawSpeedFx(state === "play" ? Math.max(0, (visF - 0.15) / 0.85) * 0.5 : 0, speedF);
   if (shake > 0) { cx += (Math.random() - 0.5) * shake * 0.02; cy += (Math.random() - 0.5) * shake * 0.02; }
   camera.position.set(cx, cy, cz);
   // カーブの先へ視線を少し寄せる（道が曲がる先を読むため。中心線の700先との差の半分）
   camera.lookAt(bikeX * 0.45 + peekF * 0.2 + (centerX(dist + 700) - centerX(dist)) * 0.5, gy + camParams.lookY, -12);
-  camera.fov = camParams.fov + speedF * 12;
+  camera.fov = camParams.fov + visF * 12;
   camera.updateProjectionMatrix();
 }
 
@@ -1701,7 +1714,7 @@ function syncWorld() {
 const hudEl = document.getElementById("hud"), hudTime = document.getElementById("hudTime"),
   hudPlates = document.getElementById("hudPlates"), hudBar = document.getElementById("hudBar"),
   hudNobi = document.getElementById("hudNobi"), hudDist = document.getElementById("hudDist"),
-  speedFxEl = document.getElementById("speedFx"), // 2026-11-18 B：速度線のオーバーレイ
+  speedFxEl = document.getElementById("speedFx"), // 2026-11-18 C：速度線の canvas（旧 div から変更）
   kataEl = document.getElementById("kata"), peekEl = document.getElementById("peekLabel"),
   cpEl = document.getElementById("cpMsg"),
   centerEl = document.getElementById("center"), centerTitle = document.getElementById("centerTitle"),
@@ -1709,6 +1722,57 @@ const hudEl = document.getElementById("hud"), hudTime = document.getElementById(
   goalEl = document.getElementById("goalPanel"), goalL1 = document.getElementById("goalLine1"),
   goalL2 = document.getElementById("goalLine2"), goalL3 = document.getElementById("goalLine3"),
   bubbleEl = document.getElementById("bubble");
+
+// ---------- 速度線（2026-11-18 C。表示だけ。物理・数値には触れない） ----------
+// 旧版は CSS の横帯（白い横線が下へ流れる）で、ユーザーの目には「横棒が
+// 上から流れてきてる」と見え、速さの演出として失敗だった。作り直し：
+// 2D canvas に縦の筋を描く。画面の左右の端だけに出し、中央（塔の読み取り）
+// には出さない。筋は下へ速く流れ、速いほど長く・速く流れる。
+// node ハーネスでは getContext がないので描かずに返す（ガードあり）。
+const speedFxCtx = (speedFxEl && typeof speedFxEl.getContext === "function") ? speedFxEl.getContext("2d") : null;
+let speedFxLastT = 0;
+const speedStreaks = [];
+function drawSpeedFx(fx, speedF) {
+  if (!speedFxCtx) return;
+  const cw = glEl.clientWidth || 960, ch = glEl.clientHeight || 540;
+  if (speedFxEl.width !== cw || speedFxEl.height !== ch) { speedFxEl.width = cw; speedFxEl.height = ch; }
+  speedFxEl.style.display = fx > 0 ? "block" : "none";
+  speedFxCtx.clearRect(0, 0, cw, ch);
+  if (fx <= 0) { speedFxLastT = t; return; }
+  const fdt = Math.min(0.05, Math.max(0, t - speedFxLastT)); speedFxLastT = t;
+  while (speedStreaks.length < 26) {
+    const left = Math.random() < 0.5;
+    speedStreaks.push({
+      x: left ? Math.random() * 0.22 : 0.78 + Math.random() * 0.22,
+      y: Math.random() - 0.2,
+      len: 0.08 + Math.random() * 0.12,
+      v: 0.7 + Math.random() * 0.6,
+      a: 0.25 + Math.random() * 0.35
+    });
+  }
+  // 下へ流れる速さ（画面の高さ/秒）。速いほど速く流れる。
+  const flow = 0.5 + speedF * 2.0;
+  speedFxCtx.lineCap = "round";
+  for (const s of speedStreaks) {
+    s.y += fdt * flow * s.v;
+    if (s.y - s.len > 1) { // 下へ抜けたら上から出し直す（左右は入れ替えない）
+      s.y = -s.len - Math.random() * 0.15;
+      s.len = 0.08 + Math.random() * 0.12 + speedF * 0.15;
+      s.v = 0.7 + Math.random() * 0.6;
+      s.a = 0.25 + Math.random() * 0.35;
+    }
+    const x0 = s.x * cw, y0 = s.y * ch;
+    const lenPx = s.len * ch * (0.7 + speedF * 0.6);
+    // 少し外側へ傾ける（端ほど外へ広がる放射の感じ）
+    const dx = (s.x - 0.5) * 0.25 * lenPx;
+    speedFxCtx.strokeStyle = "rgba(255,255,255," + (fx * s.a).toFixed(3) + ")";
+    speedFxCtx.lineWidth = 2;
+    speedFxCtx.beginPath();
+    speedFxCtx.moveTo(x0, y0);
+    speedFxCtx.lineTo(x0 + dx, y0 + lenPx);
+    speedFxCtx.stroke();
+  }
+}
 function syncUI() {
   // プレイ中のHUDはプレイ中だけ（ゴール表示との重なり防止。2D版セッションCの修正を踏襲）
   hudEl.style.display = state === "play" ? "block" : "none";
