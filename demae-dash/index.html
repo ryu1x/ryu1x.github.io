@@ -43,6 +43,11 @@
   #goalLine1 { font-size:40px; font-weight:bold; }
   #goalLine2 { font-size:22px; margin-top:8px; }
   #goalLine3 { font-size:18px; margin-top:6px; }
+  /* 2026-11-19 B回・P2 3-6：ゴール結果の振り返り画面の整理。数字を「タイム・中間」
+     と「満足度・評価・のび具合」に分け、ベストの行と「もう一度」の行を別にする。
+     1行に詰め込んでいたため読みにくかった（goalLine3 に3種類が混ざっていた）。 */
+  #goalLine4 { font-size:18px; margin-top:8px; color:#ffd166; }
+  #goalRetry { font-size:15px; margin-top:10px; color:#cfe6f5; }
   #bubble { position:absolute; right:12%; bottom:24%; background:#fff; color:#333; border-radius:14px;
     padding:10px 18px; font-size:22px; font-weight:bold; display:none; }
   /* 2026-11-19 A回・第3週の演出：ゴール画面のおばあちゃんの顔（届いた枚数で表情が変わる）。
@@ -55,6 +60,11 @@
   /* 2026-11-19 A回・第3週の演出：大将の積み上げ。初回の走り出しだけ、ざるが1枚ずつ
      積まれるあいだ画面の上に小さく出す。走行中のHUDとは別枠。 */
   #stackMsg { top:38%; left:50%; transform:translateX(-50%); color:#fff; font-size:20px; font-weight:bold;
+    text-align:center; white-space:nowrap; display:none; text-shadow:0 2px 0 rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.5); }
+  /* 2026-11-19 B回・P2 3-4：初回プレイ向けチュートリアルの段階表示。初回の走行だけ、
+     その場面に合った短い一言を出す。積み上げ表示と同じ場所（積み上げが終わってから
+     出すので重ならない）。2回目以降は出ない。 */
+  #tutMsg { top:38%; left:50%; transform:translateX(-50%); color:#fff; font-size:20px; font-weight:bold;
     text-align:center; white-space:nowrap; display:none; text-shadow:0 2px 0 rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.5); }
   /* 2026-11-15 GPT改善 1-1／1-2：起動できないときの案内（WebGL不可・読み込み失敗）。
      真っ暗な画面のままにしないための表示。通常時は出ない。 */
@@ -89,6 +99,8 @@
     #goalLine1 { font-size:28px; }
     #goalLine2 { font-size:16px; }
     #goalLine3 { font-size:14px; }
+    #goalLine4 { font-size:14px; }
+    #goalRetry { font-size:13px; }
     #bubble { font-size:17px; right:6%; bottom:20%; }
     #pad { padding:0 6px; }
     #pad button { font-size:19px; padding:15px 18px; }
@@ -109,12 +121,15 @@
     <div id="hudWarn" class="overlay"><div id="kata">カタカタ…</div><div id="peekLabel">のぞき中</div></div>
     <div id="cpMsg" class="overlay">⛩️ チェックポイント</div>
     <div id="stackMsg" class="overlay"></div>
+    <div id="tutMsg" class="overlay"></div>
     <div id="center" class="overlay"><div id="centerTitle">出前ダッシュ!!</div><div id="centerSub"></div><div id="failHint"></div></div>
     <div id="goalPanel" class="overlay">
       <img id="goalFace" alt="橋本さんのおばあちゃん" onerror="this.style.display='none'">
       <div id="goalLine1">無事なざる 5枚！</div>
       <div id="goalLine2"></div>
       <div id="goalLine3"></div>
+      <div id="goalLine4"></div>
+      <div id="goalRetry">タップ／Enterでもう一度</div>
     </div>
     <div id="bubble">ありがとね</div>
     <div id="bootError" class="overlay"><div id="bootErrorTitle"></div><div id="bootErrorBody"></div></div>
@@ -285,6 +300,13 @@ let goalFaceShown = "";
 // ざるが1枚ずつ塔に積まれる（0.35秒ごと）。2回目以降は最初から5枚積まれたまま。
 // 積まれ方は見た目だけ（plates は最初から5。塔の物理・しきい値・失敗3段階には触れない）。
 let stackShown = 5, stackT = 0, stackDoneT = 0;
+// 2026-11-19 B回・P2 3-6：ゴール結果の振り返り（自己ベスト）。ゴールした走行の
+// タイム・枚数を localStorage（demae-best）に残し、ゴール画面にベストの行を出す。
+// 表示だけの追加で、塔の物理・しきい値・失敗3段階・評価には触れない。
+let bestTime = null, bestPlates = 0, bestUpdated = false, bestDone = false;
+// 2026-11-19 B回・P2 3-4：初回プレイ向けチュートリアルの段階表示。今の場面に
+// 合った一言（syncUI で決める）。初回の走行だけ、2回目以降は空のまま。
+let tutText = "";
 const GOAL_DIST = COURSE.goalDist, CHECK_X = COURSE.checkpoint, STEP_X = COURSE.step, JUMP_X = COURSE.jump; // コースJSONから読む（2026-11-08 C回にデータ化）。全力で走って約40秒になるよう調整（第1週で実測）
 const UNIT = 58; // dist → 3Dユニット換算
 // ---------- 物理パラメータ（2026-11-17 B回・キュー 4-1） ----------
@@ -808,6 +830,30 @@ function grandmaReaction() {
   if (plates >= 2) return "あらあら、こぼしちゃったねぇ";
   return "蕎麦一本しかないじゃないか！";
 }
+// 2026-11-19 B回・P2 3-6：ゴール結果の振り返り（自己ベスト）。ゴールした走行の
+// うち一番速いタイムとそのときの枚数を localStorage（demae-best）に残す。
+// ゴール画面の最初の1フレームでだけ読み書きする（毎フレームやると、
+// 書き込みのたびに「ベスト更新！」が点滅してしまうため）。読めない環境
+// （プライベートモード等）ではベストの行を出さない。表示だけの追加で、
+// 塔の物理・しきい値・失敗3段階・評価には触れない。
+function loadBest() {
+  try {
+    const raw = localStorage.getItem("demae-best");
+    if (!raw) return null;
+    const b = JSON.parse(raw);
+    if (typeof b.t === "number" && typeof b.plates === "number") return b;
+  } catch (e) {}
+  return null;
+}
+function updateBest() {
+  const prev = loadBest();
+  bestUpdated = !prev || t < prev.t;
+  if (bestUpdated) {
+    bestTime = t; bestPlates = plates;
+    try { localStorage.setItem("demae-best", JSON.stringify({ t, plates })); } catch (e) {}
+  } else { bestTime = prev.t; bestPlates = prev.plates; }
+  bestDone = true;
+}
 // 2026-11-19 A回・第3週の演出「ありがとね」の仕上げ：ゴール画面に出すおばあちゃんの
 // 顔の絵。反応（喜び／渋い顔／激怒）と同じ枚数で選ぶ。絵は GRANDMA_FACE_SRC に
 // 埋め込んだ縮小版。画像が読めなくても文字の吹き出しは残る（img の onerror で隠れる）。
@@ -1167,14 +1213,18 @@ const shopGroup = new THREE.Group();
 }
 // ---------- 鳥居チェックポイント（中間地点に1つだけ。路側の小物鳥居より大きく、道を跨ぐ） ----------
 // 企画書の「鳥居のチェックポイント」を復活させるもの（2026-11-05 ユーザー決定）。
-// 柱は道幅5.6の外（±3.25）に立て、くぐる対象として読める大きさにする。
+// 柱は道幅5.6の外（±4.05）に立て、くぐる対象として読める大きさにする。
+// 2026-11-19 B回：柱を ±3.25 から ±4.05 へ外側へずらした。バイクが鳥居をくぐる
+// とき、柱がカメラとバイクの間に入ってバイクを一瞬隠す場面があったため（11-17 B回
+// の補足観察）。11-14 B回の黄色い看板の手当て（道の外側へ0.8ずらす）と同じ流儀。
+// 笠木・貫も柱の位置に合わせて広げる（高さ・当たり判定・チェックポイントの位置は無変更）。
 const checkpointGroup = new THREE.Group();
 {
   const RED = 0xc0392b;
-  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, -3.25, 2.6, 0));
-  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, 3.25, 2.6, 0));
-  checkpointGroup.add(box(7.8, 0.44, 0.52, RED, 0, 5.42, 0)); // 笠木
-  checkpointGroup.add(box(6.5, 0.30, 0.42, RED, 0, 4.48, 0)); // 貫
+  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, -4.05, 2.6, 0));
+  checkpointGroup.add(box(0.38, 5.2, 0.38, RED, 4.05, 2.6, 0));
+  checkpointGroup.add(box(9.4, 0.44, 0.52, RED, 0, 5.42, 0)); // 笠木
+  checkpointGroup.add(box(8.1, 0.30, 0.42, RED, 0, 4.48, 0)); // 貫
   checkpointGroup.add(box(0.30, 1.0, 0.34, RED, 0, 4.95, 0)); // 中柱
   checkpointGroup.add(box(0.72, 0.92, 0.10, 0xf5f0e6, 0, 4.95, 0.24)); // 額（白板）
   scene.add(checkpointGroup);
@@ -1780,9 +1830,11 @@ const hudEl = document.getElementById("hud"), hudTime = document.getElementById(
   centerSub = document.getElementById("centerSub"),
   failHintEl = document.getElementById("failHint"), // 2026-11-19 A・P2 3-5：失敗の理由とヒント
   stackMsgEl = document.getElementById("stackMsg"), // 2026-11-19 A・大将の積み上げ
+  tutMsgEl = document.getElementById("tutMsg"), // 2026-11-19 B・P2 3-4：初回チュートリアル
   goalEl = document.getElementById("goalPanel"), goalFaceEl = document.getElementById("goalFace"), // 2026-11-19 A・おばあちゃんの顔
   goalL1 = document.getElementById("goalLine1"),
   goalL2 = document.getElementById("goalLine2"), goalL3 = document.getElementById("goalLine3"),
+  goalL4 = document.getElementById("goalLine4"), // 2026-11-19 B・P2 3-6：ベストの行
   bubbleEl = document.getElementById("bubble");
 
 // ---------- 速度線（2026-11-18 C。表示だけ。物理・数値には触れない） ----------
@@ -1844,7 +1896,7 @@ function syncUI() {
   bPauseEl.textContent = state === "pause" ? "▶ つづける" : "⏸ 一時停止";
   if (state === "play") {
     hudTime.textContent = "タイム " + t.toFixed(1) + "秒";
-    hudPlates.textContent = "ざる " + plates + "枚 ・ " + grade();
+    hudPlates.textContent = "ざる " + Math.min(plates, stackShown) + "枚 ・ " + grade(); // 2026-11-19 A回・追記：初回の積み上げ中は、塔に見えている枚数とHUDの枚数が食い違わないよう、積まれた分だけ出す（plates は最初から5だが、塔は1枚ずつ増えるため）。
     const n = nobiPct();
     hudBar.style.width = Math.max(5, 200 * n / 100) + "px";
     hudBar.style.background = n >= 45 ? "#ffd166" : "#ff7b3c";
@@ -1874,7 +1926,18 @@ function syncUI() {
       stackMsgEl.style.display = "block";
       stackMsgEl.textContent = "いってらっしゃい！";
     } else stackMsgEl.style.display = "none";
-  } else stackMsgEl.style.display = "none"; // 走行中以外は出さない
+    // 2026-11-19 B回・P2 3-4：初回プレイ向けチュートリアルの段階表示（表示だけ）。
+    // 初回の走行だけ、その場面に合った短い一言を出す。積み上げ中と「いってらっ
+    // しゃい！」のあいだは出さない（同じ場所のため）。2回目以降は出ない。
+    tutText = "";
+    if (firstRun && stackShown >= 5 && stackDoneT <= 0) {
+      if (!checkpointDone && dist < 900) tutText = "ドラッグでハンドルを切るよ";
+      else if (!checkpointDone && dist >= 900 && dist < 1500) tutText = "軽トラがいるよ。ドラッグでよけよう";
+      else if (dist >= 4200 && !jumpDone) tutText = "ジャンプ台！ ブレーキでためると着地がやさしいよ";
+    }
+    tutMsgEl.style.display = tutText ? "block" : "none";
+    tutMsgEl.textContent = tutText;
+  } else { stackMsgEl.style.display = "none"; tutMsgEl.style.display = "none"; } // 走行中以外は出さない
   // チェックポイント通過表示（2.2秒だけ。プレイ中のみ）
   if (state === "play" && checkpointShow > 0) {
     cpEl.style.display = "block";
@@ -1906,6 +1969,8 @@ function syncUI() {
   } else { centerEl.style.display = "none"; failHintEl.style.display = "none"; }
   if (state === "goal") {
     goalEl.style.display = "block";
+    // 2026-11-19 B回・P2 3-6：自己ベストの読み書きはゴール画面の最初の1フレームでだけ行う。
+    if (!bestDone) updateBest();
     // 2026-11-19 A回・第3週の演出「ありがとね」の仕上げ：届いた枚数で表情の違う
     // おばあちゃんの顔を出す。絵が変わったときだけ入れ直す（毎フレーム入れ直すと
     // 読めない画像の onerror による非表示が上書きされてしまうため）。
@@ -1913,12 +1978,17 @@ function syncUI() {
     const gf = grandmaFaceFile();
     if (goalFaceShown !== gf) { goalFaceShown = gf; goalFaceEl.style.display = "block"; goalFaceEl.src = GRANDMA_FACE_SRC[gf]; }
     goalL1.textContent = "無事なざる " + plates + "枚！";
-    goalL2.textContent = "タイム " + t.toFixed(1) + "秒 ・ 満足度 " + satisfaction() + "% ・ 評価 " + rank();
-    goalL3.textContent = grade() + "　中間タイム " + checkpointT.toFixed(1) + "秒　タップ／Enterでもう一度";
+    // 2026-11-19 B回・P2 3-6：数字を「タイム・中間タイム」と「満足度・評価・のび具合」に分ける。
+    // 従来は goalLine3 にのび具合・中間タイム・「タップ／Enterでもう一度」が1行に混ざっていた。
+    // 「もう一度」は goalPanel の下の別行（#goalRetry）へ移した。
+    goalL2.textContent = "タイム " + t.toFixed(1) + "秒 ・ 中間タイム " + checkpointT.toFixed(1) + "秒";
+    goalL3.textContent = "満足度 " + satisfaction() + "% ・ 評価 " + rank() + " ・ " + grade();
+    goalL4.textContent = bestTime === null ? "" : (bestUpdated ? "ベスト更新！ " : "ベスト ") + bestTime.toFixed(1) + "秒（" + bestPlates + "枚）";
+    goalL4.style.display = bestTime === null ? "none" : "block";
     bubbleEl.textContent = grandmaReaction(); // 届いた枚数でおばあちゃんの反応が変わる（2026-11-13 B）
     bubbleEl.style.display = "block";
     if (firstRun) firstRun = false;
-  } else { goalEl.style.display = "none"; goalFaceEl.style.display = "none"; goalFaceShown = ""; bubbleEl.style.display = "none"; }
+  } else { goalEl.style.display = "none"; goalFaceEl.style.display = "none"; goalFaceShown = ""; bubbleEl.style.display = "none"; bestDone = false; }
 }
 
 // ---------- フレーム ----------
@@ -1962,6 +2032,9 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   get stackShown() { return stackShown; },
   get stackDoneT() { return stackDoneT; },
   get failHint() { return failHint; },
+  get bestTime() { return bestTime; }, get bestPlates() { return bestPlates; },
+  get bestUpdated() { return bestUpdated; },
+  get tutText() { return tutText; },
   get goalT() { return goalT; }, get collapseT() { return collapseT; },
   get slowT() { return slowT; },
   get slipDir() { return slipDir; }, get chokoDir() { return chokoDir; },
