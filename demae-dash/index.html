@@ -82,7 +82,14 @@
   #bBrake { font-size:23px; padding:18px 30px; background:#ffe1a8; }
   #bPause, #bMute { font-size:18px; padding:14px 18px; background:#e8f4ff; } /* 2026-11-17 C（3-3）：一時停止ボタン。走行中・一時停止中だけ表示。bMute は 2026-11-18 A（6-1）で同じ見た目 */
   #pad button:active { transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
-  #pad button.hold { background:#ffd166; }
+  /* 2026-11-19 C（P2 2-4）：ボタンの押下状態とアクセシビリティ。長押しボタンは
+     指がボタンの外へ滑っても .hold が残るため、:active と同じ沈んだ見た目にして
+     押しているあいだが読めるようにする。トグルボタン（音・一時停止）は
+     aria-pressed="true" のとき色を変え、オンの状態が文字だけでなく色でも読める
+     ようにする。キーボード操作のときは :focus-visible でどこに焦点があるかをはっきり出す。 */
+  #pad button.hold { background:#ffd166; transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
+  #pad button:focus-visible { outline:3px solid #1a73e8; outline-offset:2px; }
+  #bMute[aria-pressed="true"], #bPause[aria-pressed="true"] { background:#ffd166; }
   #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px;
     max-width:960px; line-height:1.6; word-break:keep-all; }
   /* 縦画面（アスペクト比1未満）：ゲーム画面を縦に大きく取り、文字・ボタンを収める */
@@ -136,12 +143,12 @@
   </div>
   <div id="pad">
     <div class="padGroup">
-      <button id="bPause">⏸ 一時停止</button>
-      <button id="bMute">🔊 音あり</button>
+      <button type="button" id="bPause" aria-pressed="false">⏸ 一時停止</button>
+      <button type="button" id="bMute" aria-pressed="false">🔊 音あり</button>
     </div>
     <div class="padGroup">
-      <button id="bPeek">のぞく（長押し）</button>
-      <button id="bBrake">ブレーキ（長押し）</button>
+      <button type="button" id="bPeek" aria-pressed="false">のぞく（長押し）</button>
+      <button type="button" id="bBrake" aria-pressed="false">ブレーキ（長押し）</button>
     </div>
   </div>
   <div id="hint">画面をドラッグ＝ハンドル（指を離してもハンドルはそのまま）／キーボード：←→長押し＝ハンドル／スペース長押し＝ブレーキ／P長押し＝のぞく／Enter＝スタート・再挑戦／Esc＝一時停止／M＝音のオン／オフ<br>速度は走るほど自動で上がるよ。ブレーキでためて、ジャンプの前に落とすのも手</div>
@@ -181,6 +188,21 @@ import * as THREE from "three";
 // 2026-11-15 GPT改善 1-2：CDNからのモジュール読み込みが成功した印。
 // 読み込みに失敗するとこの行に到達せず、上の見張りが案内を出す。
 window.__demaeBooted = true;
+
+// 2026-11-19 C（P2 1-4）：予期しない例外の収集口。遊んでいる最中に起きた
+// JavaScript の例外・未処理の Promise 拒否を、最新の1件と件数だけ残す。
+// 画面を奪わない（遊びを止めない）ため表示は出さない。__demae.lastError／
+// errorCount で読めるので、ブラウザ確認や不具合の報告のときに中身が分かる。
+// 送り先のサーバーはないため、収集はこの受け口まで（送信はしない）。
+let lastError = null, errorCount = 0;
+function recordError(kind, message, source, line, col) {
+  errorCount++;
+  lastError = { kind, message: String(message || "unknown error"),
+    source: source || "", line: line || 0, col: col || 0, at: new Date().toISOString() };
+}
+addEventListener("error", e => recordError("error", e.message, e.filename, e.lineno, e.colno));
+addEventListener("unhandledrejection", e => recordError("rejection",
+  (e.reason && e.reason.message) || e.reason, "", 0, 0));
 
 // ---------- コースデータ（JSON。course.json が正本で、ここには同じ内容を埋め込む） ----------
 // 編集は course-editor.html で行い、node sync-course.js で埋め込み直す。
@@ -423,7 +445,7 @@ let AC = null;
 // ままにし、engineUpdate のゲインを0にすることで即座に無音になる。
 let muted = false;
 try { muted = localStorage.getItem("demae-muted") === "1"; } catch (e) {}
-function syncMuteBtn() { const b = document.getElementById("bMute"); if (b) b.textContent = muted ? "🔇 音なし" : "🔊 音あり"; }
+function syncMuteBtn() { const b = document.getElementById("bMute"); if (b) { b.textContent = muted ? "🔇 音なし" : "🔊 音あり"; b.setAttribute("aria-pressed", muted ? "true" : "false"); } } // 2026-11-19 C（P2 2-4）：音のオン／オフはトグルなので、押下状態も aria-pressed で出す（文字だけでなく読み上げにも伝わる）。
 function setMuted(m) { muted = !!m; try { localStorage.setItem("demae-muted", muted ? "1" : "0"); } catch (e) {} syncMuteBtn(); }
 function toggleMute() { setMuted(!muted); }
 function ac() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (AC && AC.state === "suspended") AC.resume(); return AC; }
@@ -495,6 +517,9 @@ addEventListener("blur", () => {
   btnBrake = false; btnPeek = false; dragId = null;
   document.getElementById("bBrake").classList.remove("hold");
   document.getElementById("bPeek").classList.remove("hold");
+  // 2026-11-19 C（P2 2-4）：見た目だけでなく押下状態（aria-pressed）も離す。
+  document.getElementById("bBrake").setAttribute("aria-pressed", "false");
+  document.getElementById("bPeek").setAttribute("aria-pressed", "false");
 });
 function holdBtn(el, on, off) {
   // 2026-11-15 A（GPT改善 2-2）：ボタンは Pointer Events に統一する。
@@ -508,9 +533,10 @@ function holdBtn(el, on, off) {
   // それぞれ1回ずつの呼び出しで、押したまま残らない。
   const s = e => {
     e.preventDefault(); ac(); on(); el.classList.add("hold");
+    el.setAttribute("aria-pressed", "true"); // 2026-11-19 C（P2 2-4）：押しているあいだは押下状態を出す。
     try { el.setPointerCapture(e.pointerId); } catch (err) {}
   };
-  const x = () => { off(); el.classList.remove("hold"); };
+  const x = () => { off(); el.classList.remove("hold"); el.setAttribute("aria-pressed", "false"); };
   el.addEventListener("pointerdown", s);
   el.addEventListener("pointerup", x);
   el.addEventListener("pointercancel", x);
@@ -1894,6 +1920,7 @@ function syncUI() {
   // 止まっている間は文言が「▶ つづける」に変わる（2026-11-17 C・3-3）。
   bPauseEl.style.display = (state === "play" || state === "pause") ? "" : "none";
   bPauseEl.textContent = state === "pause" ? "▶ つづける" : "⏸ 一時停止";
+  bPauseEl.setAttribute("aria-pressed", state === "pause" ? "true" : "false"); // 2026-11-19 C（P2 2-4）：止まっているあいだは一時停止がオンの状態として出す。
   if (state === "play") {
     hudTime.textContent = "タイム " + t.toFixed(1) + "秒";
     hudPlates.textContent = "ざる " + Math.min(plates, stackShown) + "枚 ・ " + grade(); // 2026-11-19 A回・追記：初回の積み上げ中は、塔に見えている枚数とHUDの枚数が食い違わないよう、積まれた分だけ出す（plates は最初から5だが、塔は1枚ずつ増えるため）。
@@ -2025,6 +2052,8 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   get truckHintT() { return truckHintT; }, get truckHintDir() { return truckHintDir; },
   get truckStreak() { return truckStreak; },
   get muted() { return muted; }, toggleMute, setMuted,
+  get btnAria() { return { brake: document.getElementById("bBrake").getAttribute("aria-pressed"), peek: document.getElementById("bPeek").getAttribute("aria-pressed"), pause: bPauseEl.getAttribute("aria-pressed"), mute: document.getElementById("bMute").getAttribute("aria-pressed") }; }, // 2026-11-19 C（P2 2-4）：自動確認用。4つのボタンの押下状態。
+  get lastError() { return lastError; }, get errorCount() { return errorCount; }, // 2026-11-19 C（P2 1-4）：自動確認用。予期しない例外の最新1件と件数。
   get satisfaction() { return satisfaction(); }, get rank() { return rank(); },
   get grade() { return grade(); }, get nobiPct() { return nobiPct(); },
   get grandmaReaction() { return grandmaReaction(); },
