@@ -262,10 +262,16 @@ function validateCourse(c) {
       if (!p || typeof p !== "object") { errs.push(key + "[" + i + "] がオブジェクトではありません"); continue; }
       if (!isNum(p.d)) errs.push(key + "[" + i + "].d は数値にしてください");
       if (!isNum(p[valKey])) errs.push(key + "[" + i + "]." + valKey + " は数値にしてください");
-      if (i > 0 && isNum(p.d) && isNum(pts[i - 1].d) && p.d <= pts[i - 1].d) errs.push(key + " の d が増えていません（[" + i + "] の d=" + p.d + "）");
+      // 前の要素が null などオブジェクトでないときは、ここで .d を読むと
+      // 投げてしまう（Issue #1）。オブジェクトのときだけ比べる。
+      const prev = pts[i - 1];
+      if (i > 0 && isNum(p.d) && prev && typeof prev === "object" && isNum(prev.d) && p.d <= prev.d) errs.push(key + " の d が増えていません（[" + i + "] の d=" + p.d + "）");
     }
-    if (isNum(pts[0].d) && pts[0].d !== 0) errs.push(key + " は d=0 から始めてください（いま " + pts[0].d + "）");
-    if (gdOk && isNum(pts[pts.length - 1].d) && pts[pts.length - 1].d < c.goalDist) errs.push(key + " がゴールまで届いていません（最後の d=" + pts[pts.length - 1].d + "）");
+    // 先頭・末尾の要素が null のときも .d を読むと投げるため、同じく
+    // オブジェクトのときだけ見る（null 自体は上のループで弾いてある）。
+    const first = pts[0], last = pts[pts.length - 1];
+    if (first && typeof first === "object" && isNum(first.d) && first.d !== 0) errs.push(key + " は d=0 から始めてください（いま " + first.d + "）");
+    if (gdOk && last && typeof last === "object" && isNum(last.d) && last.d < c.goalDist) errs.push(key + " がゴールまで届いていません（最後の d=" + last.d + "）");
   }
   // 障害物：位置はコースの内側、車線は 0〜2、半幅は正の数、種別は3種の
   // いずれか。目印・他の障害物と近すぎるものも弾く（衝撃の重なり・
@@ -311,7 +317,11 @@ function loadCourse() {
     if (el && el.textContent.trim()) tried.push(JSON.parse(el.textContent));
   } catch (e) { courseErrors.push("埋め込みコースJSONが読めませんでした：" + e.message); }
   for (const cand of tried) {
-    const errs = validateCourse(cand);
+    // 検証そのものが投げても起動が止まらないよう、ここで受ける
+    // （Issue #1。投げたコースは弾いて次へ落とす）。
+    let errs;
+    try { errs = validateCourse(cand); }
+    catch (e) { courseErrors.push("コースの検証中にエラーが出ました：" + e.message); continue; }
     if (errs.length === 0) return cand;
     courseErrors = courseErrors.concat(errs);
     console.error("course validation failed", errs);
