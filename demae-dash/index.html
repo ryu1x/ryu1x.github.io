@@ -219,17 +219,103 @@ const COURSE_DEFAULT = { goalDist: 5800, checkpoint: 2900, step: 3200, jump: 460
     { x: 3800, lane: 2, halfW: 62, type: "crates" },
     { x: 5300, lane: 0, halfW: 70, type: "cones", flag: true },
   ] };
+// ---------- コースデータのスキーマ検証（2026-11-20 A回・キュー 4-4） ----------
+// 埋め込みJSON・localStorage の仮コースは、形がおかしいと読み込み時に
+// 壊れたコースで遊べてしまう（profileAt が空の配列で止まる、obstacles が
+// 配列でないと map で止まる、障害物の位置が段差と重なると衝撃が二重に
+// 入る、など）。validateCourse() はコースの形だけを確かめ、おかしい
+// ところを日本語の文言の配列で返す（空なら正しい）。遊びの数値・物理・
+// しきい値には触れない。loadCourse() は検証に通ったコースだけを使い、
+// 通らなかったものは理由を courseErrors に残して次の読み込み元へ落とす
+// （仮コース→埋め込み→既定値の順。従来の読み込みの順番は変えない）。
+// この関数は他に依存しない形にしてある（node のテストが index.html から
+// 抜き出して直接確かめられるように。sync-course.js も同じ抜き出しで使う）。
+let courseErrors = [];
+function validateCourse(c) {
+  const errs = [];
+  const isNum = v => typeof v === "number" && Number.isFinite(v);
+  if (!c || typeof c !== "object" || Array.isArray(c)) return ["コースがオブジェクトではありません"];
+  if (c.name !== undefined && typeof c.name !== "string") errs.push("name は文字列にしてください");
+  if (!isNum(c.version)) errs.push("version は数値にしてください");
+  const gdOk = isNum(c.goalDist) && c.goalDist > 0;
+  if (!gdOk) errs.push("goalDist は 0 より大きい数値にしてください");
+  // 進行上の目印（鳥居・段差・ジャンプ台）はコースの内側になければならない。
+  const marks = [["checkpoint", c.checkpoint], ["step", c.step], ["jump", c.jump]];
+  for (const [key, v] of marks) {
+    if (!isNum(v)) errs.push(key + " は数値にしてください");
+    else if (gdOk && (v <= 0 || v >= c.goalDist)) errs.push(key + " は 0〜goalDist のあいだの数値にしてください（いま " + v + "）");
+  }
+  // 目印どうしが近すぎると衝撃が重なる（段差とジャンプ台など）。100以上離す。
+  for (let i = 0; i < marks.length; i++) for (let j = i + 1; j < marks.length; j++) {
+    if (isNum(marks[i][1]) && isNum(marks[j][1]) && Math.abs(marks[i][1] - marks[j][1]) < 100) {
+      errs.push(marks[i][0] + " と " + marks[j][0] + " が近すぎます（100以上離してください）");
+    }
+  }
+  // 標高・中心線のプロファイル：空でなく、d は 0 から始めて増え続け、
+  // ゴールまで届いていなければならない（届かない区間は最後の値で
+  // 平らになってしまうため）。
+  for (const [key, valKey] of [["elevation", "h"], ["centerline", "x"]]) {
+    const pts = c[key];
+    if (!Array.isArray(pts) || pts.length === 0) { errs.push(key + " は空でない配列にしてください"); continue; }
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (!p || typeof p !== "object") { errs.push(key + "[" + i + "] がオブジェクトではありません"); continue; }
+      if (!isNum(p.d)) errs.push(key + "[" + i + "].d は数値にしてください");
+      if (!isNum(p[valKey])) errs.push(key + "[" + i + "]." + valKey + " は数値にしてください");
+      if (i > 0 && isNum(p.d) && isNum(pts[i - 1].d) && p.d <= pts[i - 1].d) errs.push(key + " の d が増えていません（[" + i + "] の d=" + p.d + "）");
+    }
+    if (isNum(pts[0].d) && pts[0].d !== 0) errs.push(key + " は d=0 から始めてください（いま " + pts[0].d + "）");
+    if (gdOk && isNum(pts[pts.length - 1].d) && pts[pts.length - 1].d < c.goalDist) errs.push(key + " がゴールまで届いていません（最後の d=" + pts[pts.length - 1].d + "）");
+  }
+  // 障害物：位置はコースの内側、車線は 0〜2、半幅は正の数、種別は3種の
+  // いずれか。目印・他の障害物と近すぎるものも弾く（衝撃の重なり・
+  // 避けられない壁になるため）。
+  if (!Array.isArray(c.obstacles)) { errs.push("obstacles は配列にしてください"); }
+  else {
+    const types = ["truck", "cones", "crates"];
+    for (let i = 0; i < c.obstacles.length; i++) {
+      const o = c.obstacles[i], tag = "obstacles[" + i + "]";
+      if (!o || typeof o !== "object") { errs.push(tag + " がオブジェクトではありません"); continue; }
+      if (!isNum(o.x)) errs.push(tag + ".x は数値にしてください");
+      else if (gdOk && (o.x <= 0 || o.x >= c.goalDist)) errs.push(tag + ".x は 0〜goalDist のあいだの数値にしてください（いま " + o.x + "）");
+      if (!Number.isInteger(o.lane) || o.lane < 0 || o.lane > 2) errs.push(tag + ".lane は 0〜2 の整数にしてください（いま " + o.lane + "）");
+      if (!isNum(o.halfW) || o.halfW <= 0) errs.push(tag + ".halfW は 0 より大きい数値にしてください（いま " + o.halfW + "）");
+      if (types.indexOf(o.type) < 0) errs.push(tag + ".type は truck/cones/crates のいずれかにしてください（いま " + o.type + "）");
+      if (o.flag !== undefined && typeof o.flag !== "boolean") errs.push(tag + ".flag は true/false にしてください");
+      if (isNum(o.x)) {
+        for (const [key, v] of marks) {
+          if (isNum(v) && Math.abs(o.x - v) < 100) errs.push(tag + " が " + key + " に近すぎます（100以上離してください）");
+        }
+        for (let j = 0; j < i; j++) {
+          const q = c.obstacles[j];
+          if (q && isNum(q.x) && q.lane === o.lane && Math.abs(o.x - q.x) < 100) errs.push(tag + " と obstacles[" + j + "] が同じ車線で近すぎます（100以上離してください）");
+        }
+      }
+    }
+  }
+  return errs;
+}
 function loadCourse() {
+  // 読み込み元を順に試す。パースできたものは検証し、通ったものだけを使う。
+  // 通らなかったものは理由を残して次へ落とす（仮コース→埋め込み→既定値。
+  // 従来の読み込みの順番は変えない）。
+  const tried = [];
   try {
     if (new URLSearchParams(location.search).get("course") === "local") {
       const raw = localStorage.getItem("demae-course-override");
-      if (raw) return JSON.parse(raw);
+      if (raw) tried.push(JSON.parse(raw));
     }
-  } catch (e) {}
+  } catch (e) { courseErrors.push("仮コース（localStorage）が読めませんでした：" + e.message); }
   try {
     const el = document.getElementById("courseJson");
-    if (el && el.textContent.trim()) return JSON.parse(el.textContent);
-  } catch (e) { console.error("course JSON parse failed, using defaults", e); }
+    if (el && el.textContent.trim()) tried.push(JSON.parse(el.textContent));
+  } catch (e) { courseErrors.push("埋め込みコースJSONが読めませんでした：" + e.message); }
+  for (const cand of tried) {
+    const errs = validateCourse(cand);
+    if (errs.length === 0) return cand;
+    courseErrors = courseErrors.concat(errs);
+    console.error("course validation failed", errs);
+  }
   return COURSE_DEFAULT;
 }
 const COURSE = loadCourse();
@@ -2072,7 +2158,12 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   get collapseSim() { return collapseSim; },
   get scatterSims() { return scatterSims; },
   get braking() { return braking; }, keys,
-  get course() { return COURSE; } };
+  get course() { return COURSE; },
+  // 2026-11-20 A回・キュー 4-4：コースの検証結果（自動確認用）。
+  // courseErrors は読み込み時に弾いたコースの理由（空なら何も弾いていない）。
+  // courseValid はいま遊んでいるコースが検証に通っているか。
+  get courseErrors() { return courseErrors; },
+  get courseValid() { return validateCourse(COURSE).length === 0; } };
 addEventListener("resize", fitViewport);
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
 requestAnimationFrame(frame);
