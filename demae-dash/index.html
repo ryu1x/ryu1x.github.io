@@ -113,6 +113,35 @@
     #pad button { font-size:19px; padding:15px 18px; }
     #bBrake { font-size:22px; padding:17px 26px; }
   }
+  /* 2026-11-21 実機フィードバック（ユーザー撮影の横向き一時停止画面）：
+     横向きは画面の背が低く、#gl（最大78vh）＋ボタン＋説明文が縦に収まらず、
+     #wrap の中央寄せのせいで上が「一時停止中」の見出し、下が説明文の末尾が
+     切れて見えなかった。背の低い画面では全体を詰めて1画面に収める。
+     表示だけの変更で、物理・数値・状態の扱いは変えていない。 */
+  @media (max-height: 540px) {
+    #wrap { justify-content:flex-start; padding-top:6px; box-sizing:border-box; }
+    #gl { height:54vh; width:auto; max-width:100vw; max-height:none; }
+    #centerTitle { font-size:30px; }
+    #centerSub { font-size:15px; margin-top:8px; padding:0 14px; }
+    #failHint { font-size:13px; margin-top:8px; }
+    #goalPanel { top:8px; padding:8px 8px 8px; }
+    #goalFace { width:110px; height:84px; margin-bottom:4px; }
+    #goalLine1 { font-size:26px; }
+    #goalLine2 { font-size:15px; margin-top:4px; }
+    #goalLine3 { font-size:13px; margin-top:3px; }
+    #goalLine4 { font-size:13px; margin-top:4px; }
+    #goalRetry { font-size:12px; margin-top:5px; }
+    #hud { font-size:12px; padding:6px 9px; min-width:0; top:8px; left:8px; }
+    #hud .big { font-size:15px; }
+    #hudWarn { top:8px; right:10px; }
+    #kata { font-size:19px; }
+    #cpMsg { font-size:23px; }
+    #pad { margin-top:6px; }
+    #pad button { font-size:17px; padding:10px 14px; }
+    #bBrake { font-size:20px; padding:12px 22px; }
+    #bPause, #bMute { font-size:15px; padding:10px 12px; }
+    #hint { font-size:11px; line-height:1.45; margin-top:4px; }
+  }
 </style>
 </head>
 <body>
@@ -644,7 +673,8 @@ addEventListener("keydown", e => {
   if (e.code === "KeyM") { toggleMute(); return; } // 2026-11-18 A（6-1）：Mで音のオン／オフ
   // ←→は押しっぱなしで滑らかに切れる（目標位置を update() で動かす）。離散の進路変更は廃止。
   if (e.code === "Escape") { if (state === "play") pause(); else if (state === "pause") resume(); return; } // 2026-11-17 C（3-3）：Escで一時停止・再開
-  if (e.code === "Enter" || e.code === "Space") { if (state === "title" || state === "pause" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) { if (state === "pause") resume(); else start(); } } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
+  if (e.code === "Enter" || e.code === "Space") { if (e.target && e.target.closest && e.target.closest("button")) return; // 2026-11-21 A回・追記：ボタンにフォーカスがあるときの Enter／Space は、ボタンの click が仕事をする。ここでも受けると、再開（keydown）→ ボタンの click で再び一時停止、の二重発火になる（ブラウザ確認で Enter 単独の再開が2回ともできなかった原因）。ボタン以外（画面・本文）にフォーカスがあるときだけここで受ける。
+    if (state === "title" || state === "pause" || (state === "goal" && goalT >= 1.0) || (state === "fail" && collapseT >= 1.5)) { if (state === "pause") resume(); else start(); } } // 2026-11-13 C：ゴール／失敗直後の再スタートは少し遅らせる。崩壊させたドラッグの終わりのクリックがそのまま再スタートになって、失敗画面を見ないまま最初から走り直すことがあったため。失敗は幕（1.2秒）が出てから、ゴールは画面が出て1秒経ってから受け付ける。
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
 // 2026-11-15 A（GPT改善 2-2）：ウィンドウがフォーカスを失ったとき
