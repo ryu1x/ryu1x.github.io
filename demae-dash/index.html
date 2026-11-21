@@ -1149,6 +1149,46 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(960, 540);
 glEl.appendChild(renderer.domElement);
 
+// ---------- WebGLコンテキストの喪失・復旧とリソースの破棄（2026-11-21 C回・キュー 6-3） ----------
+// GPUの都合などで3D表示（WebGLコンテキスト）が止まることがある。そのままでは
+// 画面だけ止まってタイマーと塔の物理が進み続けてしまうため、失ったときは
+// 走行中なら一時停止し（画面が見えなくなったときの自動停止・3-3 と同じ流儀）、
+// 復旧しても自動では再開しない（タップ／Enter・ボタンで再開）。描画が止まって
+// いるあいだに始めた・再開した走行も、次のフレームで同じく止める（frame() の
+// ガード）。three.js（r160）は内部でも contextlost/restored を拾って描画の
+// 再初期化をするが、ゲーム側の進行（タイマー・物理の凍結と案内）はここで行う。
+// 復旧しても描画が戻らない場合は、ページの再読み込みで直る。
+// ページを離れるとき（pagehide）には、シーンのジオメトリ・マテリアル・
+// テクスチャとレンダラーの内部リソースを破棄する。破棄しても three.js は
+// 次の描画で必要なものを描き直すため、タブを切り替えて戻ってきた場合
+// （bfcache）もそのまま遊べる。何度呼んでも1回だけ効く。
+let contextLost = false; // いま3D表示が止まっているか
+function onContextLost(e) {
+  if (e && typeof e.preventDefault === "function") e.preventDefault(); // 復旧できるよう、既定の破棄を止める
+  contextLost = true;
+  if (state === "play") pause(); // タイマー・塔の物理を凍らせる（3-3 と同じ）
+}
+function onContextRestored() {
+  contextLost = false; // 描画は rAF の次の描画から戻る。止まっていた走行はそのまま止めておき、再開はプレイヤーに任せる
+}
+renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
+let disposed = false; // WebGLリソースを破棄したか
+function disposeGame() {
+  if (disposed) return;
+  disposed = true;
+  scene.traverse((o) => {
+    if (o.geometry && typeof o.geometry.dispose === "function") o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of mats) {
+      if (m.map && typeof m.map.dispose === "function") m.map.dispose();
+      if (typeof m.dispose === "function") m.dispose();
+    }
+  });
+  if (renderer && typeof renderer.dispose === "function") renderer.dispose();
+}
+addEventListener("pagehide", disposeGame);
+
 // ---------- 画面の向き対応（2026-11-02 ユーザー希望：スマホの縦画面に合わせる） ----------
 // 横長は従来どおり（FOV58・距離7.4・高さ3.05・注視点y1.5）。
 // 縦長（アスペクト比<1）では FOV を広げ（58→68）、カメラを少し後ろ（7.4→8.2）と
@@ -2182,7 +2222,11 @@ function syncUI() {
   } else if (state === "pause") { // 2026-11-17 C（3-3）：一時停止中は場面の上に「止まっている」表示を出す
     centerEl.style.display = "flex";
     centerTitle.textContent = "一時停止中";
-    centerSub.textContent = "タップ／Enterでつづける";
+    // 2026-11-21 C（6-3）：描画が止まっての一時停止のときは、その理由と
+    // 戻らない場合の対処を出す（再開は復旧してから。タップ／Enter・ボタン）。
+    centerSub.textContent = contextLost
+      ? "3D表示が一時的に止まりました。戻るまでお待ちください（戻らない場合はページを再読み込みしてください）"
+      : "タップ／Enterでつづける";
   } else if (state === "fail") {
     // 2026-11-11 B：崩壊の演出が見えるよう、失敗表示は崩壊から 1.2 秒遅らせる。
     // 崩壊直後は #center の暗い幕が画面全体を覆ってざるの飛び散りが見えなかったため。
@@ -2226,6 +2270,10 @@ function syncUI() {
 // ---------- フレーム ----------
 function frame(now) {
   requestAnimationFrame(frame);
+  // 2026-11-21 C（6-3）：描画が止まっているあいだは走らせない（失った直後の
+  // 一時停止は onContextLost が行い、止まっているあいだに始めた・再開した
+  // 走行もここで止める）。再開は復旧してからプレイヤーが行う。
+  if (contextLost && state === "play") pause();
   const dt = Math.min(0.05, (now - (frame.last || now)) / 1000 || 0.016); frame.last = now;
   update(dt);
   engineUpdate(); // エンジン音と風の音を速度に合わせる（演出のみ）
@@ -2245,6 +2293,11 @@ function frame(now) {
 /* 自動テスト用のデバッグフック（画面には出ない。2D版と同一） */
 window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange: onVisibilityChange,
   _onOrientationChange: onOrientationChange, get orientation() { return lastOrientation; }, // 2026-11-21 A回・キュー 2-5：自動確認用。いまの画面の向き（landscape／portrait）。
+  // 2026-11-21 C回・キュー 6-3：WebGLコンテキストの喪失・復旧とリソース破棄の自動確認用。
+  // contextLost はいま3D表示が止まっているか、disposed は破棄したか。
+  // _onContextLost／_onContextRestored は canvas のイベントと同じ受け口、_dispose は pagehide と同じ受け口。
+  get contextLost() { return contextLost; }, get disposed() { return disposed; },
+  _onContextLost: onContextLost, _onContextRestored: onContextRestored, _dispose: disposeGame,
   get state() { return state; }, get paused() { return state === "pause"; }, get t() { return t; }, get dist() { return dist; },
   get speed() { return speed; }, get theta() { return theta; }, get sway() { return sway; },
   get laneX() { return laneX; }, get steerTarget() { return steerTarget; },
