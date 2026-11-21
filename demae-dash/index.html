@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<!-- 2026-11-21 実機フィードバック（ユーザー「フルスクリーンってできるんかなiPhoneのサファリ」）：
+     iPhone の Safari にはページ側から全画面にする仕組みがない（iPad にはある）。
+     代わりに「ホーム画面に追加」から起動すると Safari の枠なしで開けるよう、
+     そのための指定とアイコン・マニフェストを用意した。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="出前ダッシュ">
+<meta name="theme-color" content="#1b2a3a">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
 <title>出前ダッシュ!! 橋本さん宅プロトタイプ（3D版 土台v1）</title>
 <style>
   html, body { margin:0; padding:0; background:#1b2a3a; height:100%; overflow:hidden;
@@ -141,6 +152,15 @@
     #bBrake { font-size:20px; padding:12px 22px; }
     #bPause, #bMute { font-size:15px; padding:10px 12px; }
     #hint { font-size:11px; line-height:1.45; margin-top:4px; }
+    /* 2026-11-21 実機：横向きで画面が細くなると、案内文（nowrap）が左右に
+       はみ出して頭と尻尾が見切れた。背の低い画面では折り返して収める。 */
+    #tutMsg, #stackMsg { white-space:normal; width:92%; font-size:16px; line-height:1.5; }
+  }
+  /* 2026-11-21：ホーム画面から起動したときは Safari の枠がない分、
+     背の低い画面でも少し大きく、中央に置く（対応しない環境では効かないだけ）。 */
+  @media (display-mode: standalone) and (max-height: 540px), (display-mode: fullscreen) and (max-height: 540px) {
+    #wrap { justify-content:center; padding-top:0; }
+    #gl { height:60vh; }
   }
 </style>
 </head>
