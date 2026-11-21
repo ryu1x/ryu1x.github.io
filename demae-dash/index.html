@@ -113,6 +113,35 @@
     #pad button { font-size:19px; padding:15px 18px; }
     #bBrake { font-size:22px; padding:17px 26px; }
   }
+  /* 2026-11-21 実機フィードバック（ユーザー撮影の横向き一時停止画面）：
+     横向きは画面の背が低く、#gl（最大78vh）＋ボタン＋説明文が縦に収まらず、
+     #wrap の中央寄せのせいで上が「一時停止中」の見出し、下が説明文の末尾が
+     切れて見えなかった。背の低い画面では全体を詰めて1画面に収める。
+     表示だけの変更で、物理・数値・状態の扱いは変えていない。 */
+  @media (max-height: 540px) {
+    #wrap { justify-content:flex-start; padding-top:6px; box-sizing:border-box; }
+    #gl { height:54vh; width:auto; max-width:100vw; max-height:none; }
+    #centerTitle { font-size:30px; }
+    #centerSub { font-size:15px; margin-top:8px; padding:0 14px; }
+    #failHint { font-size:13px; margin-top:8px; }
+    #goalPanel { top:8px; padding:8px 8px 8px; }
+    #goalFace { width:110px; height:84px; margin-bottom:4px; }
+    #goalLine1 { font-size:26px; }
+    #goalLine2 { font-size:15px; margin-top:4px; }
+    #goalLine3 { font-size:13px; margin-top:3px; }
+    #goalLine4 { font-size:13px; margin-top:4px; }
+    #goalRetry { font-size:12px; margin-top:5px; }
+    #hud { font-size:12px; padding:6px 9px; min-width:0; top:8px; left:8px; }
+    #hud .big { font-size:15px; }
+    #hudWarn { top:8px; right:10px; }
+    #kata { font-size:19px; }
+    #cpMsg { font-size:23px; }
+    #pad { margin-top:6px; }
+    #pad button { font-size:17px; padding:10px 14px; }
+    #bBrake { font-size:20px; padding:12px 22px; }
+    #bPause, #bMute { font-size:15px; padding:10px 12px; }
+    #hint { font-size:11px; line-height:1.45; margin-top:4px; }
+  }
 </style>
 </head>
 <body>
