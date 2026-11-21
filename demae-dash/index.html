@@ -1108,6 +1108,22 @@ glEl.appendChild(renderer.domElement);
 const CAM_LAND = { fov: 58, dist: 7.4, height: 3.05, lookY: 1.5 };
 const CAM_PORT = { fov: 68, dist: 8.2, height: 3.3, lookY: 1.5 };
 let camParams = { fov: CAM_LAND.fov, dist: CAM_LAND.dist, height: CAM_LAND.height, lookY: CAM_LAND.lookY };
+// ---------- 画面回転時の扱い（2026-11-21 A回・キュー 2-5） ----------
+// 回転＝画面の向きが縦↔横に変わること（アスペクト比が 1 をまたぐ）。
+// 走行中に回転したら自動で一時停止する（画面が見えなくなったときの自動停止と
+// 同じ流儀。3-3）。回転のあいだはレイアウトもカメラも変わるため、走り続けたまま
+// では公平に操れないから。タイマー・塔の物理は凍り、再開はボタン・Enter・画面
+// タップ（3-3 と同じ）。タイトル・一時停止中・ゴール・失敗のときは状態は変わらず、
+// 画面の大きさとカメラだけ合わせ直す。回転の検知は resize での向きの変化で見る。
+// orientationchange も同じ処理を呼ぶ（resize が来ない端末への備え）。
+// 同じ向きのままの大きさの変化（横→横など）では止めない。
+let lastOrientation = null; // "landscape" | "portrait"
+function onOrientationChange() {
+  const w = glEl.clientWidth || 960, h = glEl.clientHeight || 540;
+  const now = (w / h) >= 1 ? "landscape" : "portrait";
+  if (lastOrientation !== null && now !== lastOrientation && state === "play") pause();
+  lastOrientation = now;
+}
 function fitViewport() {
   const w = glEl.clientWidth || 960, h = glEl.clientHeight || 540;
   renderer.setSize(w, h);
@@ -1119,6 +1135,7 @@ function fitViewport() {
     height: mix(CAM_LAND.height, CAM_PORT.height), lookY: mix(CAM_LAND.lookY, CAM_PORT.lookY) };
   camera.fov = camParams.fov;
   camera.updateProjectionMatrix();
+  onOrientationChange();
 }
 
 scene.add(new THREE.HemisphereLight(0xcfeaff, 0xe8d9b0, 1.0));
@@ -2177,6 +2194,7 @@ function frame(now) {
 }
 /* 自動テスト用のデバッグフック（画面には出ない。2D版と同一） */
 window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange: onVisibilityChange,
+  _onOrientationChange: onOrientationChange, get orientation() { return lastOrientation; }, // 2026-11-21 A回・キュー 2-5：自動確認用。いまの画面の向き（landscape／portrait）。
   get state() { return state; }, get paused() { return state === "pause"; }, get t() { return t; }, get dist() { return dist; },
   get speed() { return speed; }, get theta() { return theta; }, get sway() { return sway; },
   get laneX() { return laneX; }, get steerTarget() { return steerTarget; },
@@ -2220,6 +2238,7 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   get courseMigrated() { return courseMigrated; },
   get courseValid() { return validateCourse(COURSE).length === 0; } };
 addEventListener("resize", fitViewport);
+addEventListener("orientationchange", fitViewport); // 2026-11-21 A回・キュー 2-5：resize が来ない端末への備え（fitViewport 内で向きの変化を見る）
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
 requestAnimationFrame(frame);
 </script>
