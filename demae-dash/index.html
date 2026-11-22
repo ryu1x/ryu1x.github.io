@@ -100,7 +100,7 @@
      ようにする。キーボード操作のときは :focus-visible でどこに焦点があるかをはっきり出す。 */
   #pad button.hold { background:#ffd166; transform:translateY(2px); box-shadow:0 1px 0 #c9a86a; }
   #pad button:focus-visible { outline:3px solid #1a73e8; outline-offset:2px; }
-  #bMute[aria-pressed="true"], #bPause[aria-pressed="true"] { background:#ffd166; }
+  #bMute[aria-pressed="true"], #bPause[aria-pressed="true"], #bLow[aria-pressed="true"] { background:#ffd166; }
   #hint { color:#cfe6f5; font-size:13px; margin-top:8px; text-align:center; padding:0 8px;
     max-width:960px; line-height:1.6; word-break:keep-all; }
   /* 縦画面（アスペクト比1未満）：ゲーム画面を縦に大きく取り、文字・ボタンを収める */
@@ -194,6 +194,7 @@
     <div class="padGroup">
       <button type="button" id="bPause" aria-pressed="false">⏸ 一時停止</button>
       <button type="button" id="bMute" aria-pressed="false">🔊 音あり</button>
+      <button type="button" id="bLow" aria-pressed="false">⚡ ふつう</button>
     </div>
     <div class="padGroup">
       <button type="button" id="bPeek" aria-pressed="false">のぞく（長押し）</button>
@@ -520,6 +521,26 @@ try { muted = localStorage.getItem("demae-muted") === "1"; } catch (e) {}
 function syncMuteBtn() { const b = document.getElementById("bMute"); if (b) { b.textContent = muted ? "🔇 音なし" : "🔊 音あり"; b.setAttribute("aria-pressed", muted ? "true" : "false"); } } // 2026-11-19 C（P2 2-4）：音のオン／オフはトグルなので、押下状態も aria-pressed で出す（文字だけでなく読み上げにも伝わる）。
 function setMuted(m) { muted = !!m; try { localStorage.setItem("demae-muted", muted ? "1" : "0"); } catch (e) {} syncMuteBtn(); }
 function toggleMute() { setMuted(!muted); }
+// ---------- 低負荷モード（2026-11-22 C回・キュー 6-4） ----------
+// 古い端末や重さを感じるとき用の、表示だけの切り替え（物理・しきい値・
+// ゲームの数値には触れない）。オンにすると (1) 3D描画のピクセル比を 1 に
+// 下げ（端末の表示倍率2なら描く点が4分の1になる）、(2) 速度線の描画を
+// 止める。アンチエイリアスはレンダラーを作るときに決まるため、この切り
+// 替えでは変えられない（変えるには作り直しが要る。6-2 の計測では描画は
+// 軽い（メッシュ501個・三角形約9,156個・計算0.23ms/フレーム）ため見送り）。
+// 設定は localStorage（demae-lowpower）に残し、次に開いたときも同じまま
+// にする（ミュートと同じ流儀）。ボタンはタイトル画面でも押せる（走る前
+// から軽くしておける）。
+let lowPower = false;
+try { lowPower = localStorage.getItem("demae-lowpower") === "1"; } catch (e) {}
+let appliedPixelRatio = 1; // 実際にレンダラーへ渡したピクセル比（自動確認用）
+function applyPixelRatio() {
+  appliedPixelRatio = lowPower ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  if (typeof renderer !== "undefined" && renderer) renderer.setPixelRatio(appliedPixelRatio);
+}
+function syncLowBtn() { const b = document.getElementById("bLow"); if (b) { b.textContent = lowPower ? "🔋 低負荷" : "⚡ ふつう"; b.setAttribute("aria-pressed", lowPower ? "true" : "false"); } } // 2026-11-19 C（P2 2-4）と同じ流儀：トグルボタンは押下状態も aria-pressed で出す。
+function setLowPower(m) { lowPower = !!m; try { localStorage.setItem("demae-lowpower", lowPower ? "1" : "0"); } catch (e) {} applyPixelRatio(); syncLowBtn(); }
+function toggleLowPower() { setLowPower(!lowPower); }
 function ac() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (AC && AC.state === "suspended") AC.resume(); return AC; }
 function noiseBurst(dur, vol, freq) {
   if (muted) return;
@@ -622,6 +643,9 @@ bPauseEl.addEventListener("click", () => { ac(); if (state === "play") pause(); 
 const bMuteEl = document.getElementById("bMute"); // 2026-11-18 A（6-1）：音のオン／オフ。タイトル画面でも押せる（走行前から消しておける）。
 bMuteEl.addEventListener("click", () => { toggleMute(); });
 syncMuteBtn(); // 保存されていた設定があれば表示を合わせる
+const bLowEl = document.getElementById("bLow"); // 2026-11-22 C（6-4）：低負荷モードの切り替え。タイトル画面でも押せる（走る前から軽くしておける）。
+bLowEl.addEventListener("click", () => { toggleLowPower(); });
+syncLowBtn(); // 保存されていた設定があれば表示を合わせる
 // ---------- ハンドルのドラッグ操作（2026-11-10 ユーザー指示。マリオカートツアー式） ----------
 // 相対ドラッグ：指を置いた場所が起点で、そこからの水平の動きでハンドルが切れる。
 // 横位置は車線スナップなしの連続値。指を離したらハンドルは真っ直ぐ側へ戻る
@@ -1030,7 +1054,7 @@ try {
   bootFail("3D表示の初期化に失敗しました",
     "3D表示の準備でエラーが起きたため、ゲームを始められません。ページを再読み込みしてみてください。直らない場合は、別のブラウザで開いてみてください。", e);
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+applyPixelRatio(); // 2026-11-22 C（6-4）：低負荷モードがオンならピクセル比1、ふつうは端末の表示倍率（上限2）。保存されていた設定があればここで効く
 renderer.setSize(960, 540);
 glEl.appendChild(renderer.domElement);
 
@@ -2003,6 +2027,7 @@ const speedFxCtx = (speedFxEl && typeof speedFxEl.getContext === "function") ? s
 let speedFxLastT = 0;
 const speedStreaks = [];
 function drawSpeedFx(fx, speedF) {
+  if (lowPower) { if (speedFxEl) speedFxEl.style.display = "none"; return; } // 2026-11-22 C（6-4）：低負荷モードでは速度線を描かない（2Dの重ね描きも止める）
   if (!speedFxCtx) return;
   const cw = glEl.clientWidth || 960, ch = glEl.clientHeight || 540;
   if (speedFxEl.width !== cw || speedFxEl.height !== ch) { speedFxEl.width = cw; speedFxEl.height = ch; }
@@ -2199,7 +2224,12 @@ const __demaeHook = { start, steerTo, pause, resume, setState, _onVisibilityChan
   get truckHintT() { return truckHintT; }, get truckHintDir() { return truckHintDir; },
   get truckStreak() { return truckStreak; },
   get muted() { return muted; }, toggleMute, setMuted,
-  get btnAria() { return { brake: document.getElementById("bBrake").getAttribute("aria-pressed"), peek: document.getElementById("bPeek").getAttribute("aria-pressed"), pause: bPauseEl.getAttribute("aria-pressed"), mute: document.getElementById("bMute").getAttribute("aria-pressed") }; }, // 2026-11-19 C（P2 2-4）：自動確認用。4つのボタンの押下状態。
+  // 2026-11-22 C回・キュー 6-4：低負荷モードの自動確認用。
+  // pixelRatio は実際にレンダラーへ渡したピクセル比、speedFxShown は速度線が画面に出ているか。
+  get lowPower() { return lowPower; }, toggleLowPower, setLowPower,
+  get pixelRatio() { return appliedPixelRatio; },
+  get speedFxShown() { return speedFxEl ? speedFxEl.style.display === "block" : false; },
+  get btnAria() { return { brake: document.getElementById("bBrake").getAttribute("aria-pressed"), peek: document.getElementById("bPeek").getAttribute("aria-pressed"), pause: bPauseEl.getAttribute("aria-pressed"), mute: document.getElementById("bMute").getAttribute("aria-pressed"), low: document.getElementById("bLow").getAttribute("aria-pressed") }; }, // 2026-11-19 C（P2 2-4）：自動確認用。5つのボタンの押下状態。
   get lastError() { return lastError; }, get errorCount() { return errorCount; }, // 2026-11-19 C（P2 1-4）：自動確認用。予期しない例外の最新1件と件数。
   get satisfaction() { return satisfaction(); }, get rank() { return rank(); },
   get grade() { return grade(); }, get nobiPct() { return nobiPct(); },
