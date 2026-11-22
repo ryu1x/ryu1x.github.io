@@ -239,6 +239,19 @@ import * as THREE from "three";
 // 読み込みに失敗するとこの行に到達せず、上の見張りが案内を出す。
 window.__demaeBooted = true;
 
+// 2026-11-22 B（P2 7-4）：開発用と本番用の境界。開発用の入り口は
+// ?debug=1 のときだけ開く（ふだん遊ぶ URL には付けない）。
+// ・window.__demae（自動テスト用の操作・読み取りフック）
+// ・?course=local（エディタの試走用。localStorage の編集中コースを読む）
+// ・開発用の console 出力（不正な状態遷移の警告・コース検証失敗の記録）
+// 本番用として残るもの：起動の見張り（__demaeBootError。読み込み失敗の
+// 案内は遊ぶ人への案内）、例外の収集口（recordError。画面には出さず、
+// 送りもしない。読むのは __demae 経由なので開発時のみ）、ベスト記録・
+// ミュート設定（demae-best／demae-muted。遊ぶ人の設定）。
+// node のテストは location.search に "?debug=1" を入れて動かす。
+let DEV = false;
+try { DEV = new URLSearchParams(location.search).get("debug") === "1"; } catch (e) { DEV = false; }
+
 // 2026-11-19 C（P2 1-4）：予期しない例外の収集口。遊んでいる最中に起きた
 // JavaScript の例外・未処理の Promise 拒否を、最新の1件と件数だけ残す。
 // 画面を奪わない（遊びを止めない）ため表示は出さない。__demae.lastError／
@@ -256,7 +269,8 @@ addEventListener("unhandledrejection", e => recordError("rejection",
 
 // ---------- コースデータ（JSON。course.json が正本で、ここには同じ内容を埋め込む） ----------
 // 編集は course-editor.html で行い、node sync-course.js で埋め込み直す。
-// ?course=local のときだけ、エディタが localStorage に置いた編集中コースを読む（試走用）。
+// ?debug=1&course=local のときだけ、エディタが localStorage に置いた編集中コースを読む（試走用。
+// 開発用の入り口なので ?debug=1 が無いと読まない。2026-11-22 B・キュー 7-4）。
 // 読み込みに失敗した場合は course.json と同一の既定値を使う。
 // （course.json の写し。正本は course.json。check-course-sync.js が一致を確かめる）
 // 形の扱い（既定値・スキーマ検証・版の移行・制御点の補間）は
@@ -271,7 +285,7 @@ function loadCourse() {
   // （仮コース→埋め込み→既定値。従来の読み込みの順番は変えない）。
   const tried = [];
   try {
-    if (new URLSearchParams(location.search).get("course") === "local") {
+    if (DEV && new URLSearchParams(location.search).get("course") === "local") {
       const raw = localStorage.getItem("demae-course-override");
       if (raw) tried.push(JSON.parse(raw));
     }
@@ -299,7 +313,7 @@ function loadCourse() {
     catch (e) { courseErrors.push("コースの検証中にエラーが出ました：" + e.message); continue; }
     if (errs.length === 0) return use;
     courseErrors = courseErrors.concat(errs);
-    console.error("course validation failed", errs);
+    if (DEV) console.error("course validation failed", errs); // 開発用の記録（7-4）。本番では出さない。
   }
   return DemaeCourse.COURSE_DEFAULT;
 }
@@ -332,7 +346,7 @@ const STATE_TRANSITIONS = {
 function setState(next) {
   if (next === state) return true; // 同じ状態への呼び直しは無害なので通す
   if (!STATE_TRANSITIONS[state] || STATE_TRANSITIONS[state].indexOf(next) < 0) {
-    console.warn("[demae] invalid state transition: " + state + " -> " + next);
+    if (DEV) console.warn("[demae] invalid state transition: " + state + " -> " + next); // 開発用の記録（7-4）。本番では出さない。
     return false;
   }
   state = next;
@@ -2161,8 +2175,11 @@ function frame(now) {
   syncUI();
   renderer.render(scene, camera);
 }
-/* 自動テスト用のデバッグフック（画面には出ない。2D版と同一） */
-window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange: onVisibilityChange,
+/* 自動テスト用のデバッグフック（画面には出ない。2D版と同一）。
+   2026-11-22 B（P2 7-4）：開発用と本番用の境界。ふだん遊ぶ URL では
+   window.__demae は置かない。?debug=1 のときだけ最後の1行で置く。
+   node のテストは location.search に "?debug=1" を入れて動かす。 */
+const __demaeHook = { start, steerTo, pause, resume, setState, _onVisibilityChange: onVisibilityChange,
   _onOrientationChange: onOrientationChange, get orientation() { return lastOrientation; }, // 2026-11-21 A回・キュー 2-5：自動確認用。いまの画面の向き（landscape／portrait）。
   // 2026-11-21 C回・キュー 6-3：WebGLコンテキストの喪失・復旧とリソース破棄の自動確認用。
   // contextLost はいま3D表示が止まっているか、disposed は破棄したか。
@@ -2211,6 +2228,9 @@ window.__demae = { start, steerTo, pause, resume, setState, _onVisibilityChange:
   // 移行しなかった（すでに今の版だった）場合は null。形は { from, to, note }。
   get courseMigrated() { return courseMigrated; },
   get courseValid() { return DemaeCourse.validateCourse(COURSE).length === 0; } };
+// 開発用の入り口は ?debug=1 のときだけ開く（7-4）。ふだん遊ぶ URL では
+// window.__demae は置かず、ゲームの操作・内部の読み取りはできない。
+if (DEV) window.__demae = __demaeHook;
 addEventListener("resize", fitViewport);
 addEventListener("orientationchange", fitViewport); // 2026-11-21 A回・キュー 2-5：resize が来ない端末への備え（fitViewport 内で向きの変化を見る）
 fitViewport(); // 初期表示でもコンテナ（縦画面含む）に合わせる
