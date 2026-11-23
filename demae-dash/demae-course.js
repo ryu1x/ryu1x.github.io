@@ -25,8 +25,8 @@ const COURSE_DEFAULT = { goalDist: 5800, checkpoint: 2900, step: 3200, jump: 460
   centerline: [{ d: 0, x: 0 }, { d: 1000, x: 0 }, { d: 1800, x: -2.6 }, { d: 2600, x: 0 }, { d: 3400, x: 2.8 }, { d: 4400, x: 0 }, { d: 5800, x: 0 }],
   obstacles: [
     { x: 1400, lane: 1, halfW: 70, type: "truck" },
-    { x: 2100, lane: 2, halfW: 70, type: "cones" },
-    { x: 3800, lane: 2, halfW: 62, type: "crates" },
+    { x: 2100, lane: 2, halfW: 70, type: "cones", flag: true },
+    { x: 3800, lane: 2, halfW: 62, type: "crates", flag: true },
     { x: 5300, lane: 0, halfW: 70, type: "cones", flag: true },
   ] };
 // ---------- コースデータのスキーマ検証（2026-11-20 A回・キュー 4-4） ----------

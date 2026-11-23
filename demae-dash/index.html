@@ -206,7 +206,7 @@
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
-<script type="application/json" id="courseJson">{"centerline":[{"d":0,"x":0},{"d":1000,"x":0},{"d":1800,"x":-2.6},{"d":2600,"x":0},{"d":3400,"x":2.8},{"d":4400,"x":0},{"d":5800,"x":0}],"checkpoint":2900,"elevation":[{"d":0,"h":16},{"d":1200,"h":14},{"d":2600,"h":8},{"d":3800,"h":3},{"d":4600,"h":0},{"d":5800,"h":0}],"goalDist":5800,"jump":4600,"name":"コース初版 v1.1（下り強調・標高16）","obstacles":[{"halfW":70,"lane":1,"type":"truck","x":1400},{"halfW":70,"lane":2,"type":"cones","x":2100},{"halfW":62,"lane":2,"type":"crates","x":3800},{"flag":true,"halfW":70,"lane":0,"type":"cones","x":5300}],"step":3200,"version":3}</script>
+<script type="application/json" id="courseJson">{"centerline":[{"d":0,"x":0},{"d":1000,"x":0},{"d":1800,"x":-2.6},{"d":2600,"x":0},{"d":3400,"x":2.8},{"d":4400,"x":0},{"d":5800,"x":0}],"checkpoint":2900,"elevation":[{"d":0,"h":16},{"d":1200,"h":14},{"d":2600,"h":8},{"d":3800,"h":3},{"d":4600,"h":0},{"d":5800,"h":0}],"goalDist":5800,"jump":4600,"name":"コース初版 v1.1（下り強調・標高16）","obstacles":[{"halfW":70,"lane":1,"type":"truck","x":1400},{"halfW":70,"lane":2,"type":"cones","flag":true,"x":2100},{"halfW":62,"lane":2,"type":"crates","flag":true,"x":3800},{"flag":true,"halfW":70,"lane":0,"type":"cones","x":5300}],"step":3200,"version":3}</script>
 <script>
 /* 2026-11-15 GPT改善 1-2：起動の見張り（モジュールより先に置く通常スクリプト）。
    Three.js は CDN（importmap の three@0.160.0 に固定）から読むため、通信制限・
@@ -1491,21 +1491,27 @@ function makeCones(withFlag, signShift) { // 工事のコーンと看板（看�
   if (withFlag) {
     // 高い旗（2026-11-08 A回。5300の左コーン専用。画面左端で小さく見え、遠方では
     // ほとんど読めなかったため。看板の上端2.78より高く、塔の上端2.3より十分高い
-    // 3.6まで赤い柱を立て、白い旗を掲げる。道路の中央寄り（x+側）に置き、
+    // 3.6まで赤い柱を立て、白い旗を掲げる。道路の中央寄りに置き、
     // 接近するバイクから画面中央寄りに見えるようにする。見た目だけの変更で、
     // 位置・当たり判定・塔の物理には触れない）
     // 2026-11-10 A回：着地直後に読めたが小さかった（実画面で幅約20px）ため、柱と旗を
     // 約1.5倍に大きくした（柱4.8・旗1.1×0.7）。位置・当たり判定は無変更。
-    g.add(box(0.14, 4.8, 0.14, 0xc0392b, 0.85, 2.4, 0.45)); // 赤い柱
-    g.add(box(1.1, 0.7, 0.05, 0xf5f0e6, 1.22, 4.45, 0.45)); // 白い旗
-    g.add(box(1.1, 0.18, 0.06, 0xc0392b, 1.22, 4.45, 0.45)); // 旗の赤い帯
+    // 2026-11-23 A回：2100の右コーンにも同じ旗を立てた（11-22 C回のブラウザ確認で
+    // 遠くから読めなかったため。5300と同じ手当て）。右車線では中央寄りはx-側なの
+    // で、旗の位置は車線の向きで反転する（signShift>0 なら -0.85／-1.22）。
+    // 5300（左車線・signShift -1）は従来どおり +0.85／+1.22 のまま。
+    const flagSide = signShift > 0 ? -1 : 1;
+    g.add(box(0.14, 4.8, 0.14, 0xc0392b, flagSide * 0.85, 2.4, 0.45)); // 赤い柱
+    g.add(box(1.1, 0.7, 0.05, 0xf5f0e6, flagSide * 1.22, 4.45, 0.45)); // 白い旗
+    g.add(box(1.1, 0.18, 0.06, 0xc0392b, flagSide * 1.22, 4.45, 0.45)); // 旗の赤い帯
   }
   return g;
 }
-function makeCrates() { // 店先のはみ出し荷物（木箱を高く積んだ山）
+function makeCrates(withFlag, signShift) { // 店先のはみ出し荷物（木箱を高く積んだ山）
   const g = new THREE.Group();
   // 2026-11-16 A回：木箱とざるも蹴散らし（initScatter）の対象にする。
-  // 看板にあたる目印はないので、積まれた箱は全部飛ぶ。当たり判定・塔の物理は無変更。
+  // 旗はグループに残し、蹴散らしても立ったままにする（コーンの旗と同じ流儀）。
+  // 当たり判定・塔の物理は無変更。
   const scatterParts = [];
   const wood = [0xa9713f, 0x8a6a2f];
   for (let i = 0; i < 3; i++) scatterParts.push(box(0.7, 0.7, 0.7, wood[i % 2], -0.75 + i * 0.75, 0.35, 0));
@@ -1514,11 +1520,22 @@ function makeCrates() { // 店先のはみ出し荷物（木箱を高く積ん�
   const basket = cyl(0.32, 0.26, 0.35, 0xe8c877, 0, 2.28, 0, 10); scatterParts.push(basket); // 一番上にざる
   for (const m of scatterParts) g.add(m);
   g.userData.scatterParts = scatterParts;
+  if (withFlag) {
+    // 高い旗（2026-11-23 A回。3800の右の荷物専用。11-22 C回のブラウザ確認で
+    // 遠くから読めなかったため、5300の旗と同じ手当て。木箱の山の上端は約2.4で
+    // 塔の上端2.3とほぼ同じ高さしかないので、柱4.8・白い旗1.1×0.7を道路の
+    // 中央寄り（右車線ではx-側）に立てる。蹴散らしても旗は残る。見た目だけの
+    // 変更で、位置・当たり判定・塔の物理には触れない）
+    const flagSide = signShift > 0 ? -1 : 1;
+    g.add(box(0.14, 4.8, 0.14, 0xc0392b, flagSide * 0.85, 2.4, 0.45)); // 赤い柱
+    g.add(box(1.1, 0.7, 0.05, 0xf5f0e6, flagSide * 1.22, 4.45, 0.45)); // 白い旗
+    g.add(box(1.1, 0.18, 0.06, 0xc0392b, flagSide * 1.22, 4.45, 0.45)); // 旗の赤い帯
+  }
   return g;
 }
 const obstacleMeshes = [];
 for (const o of OBSTACLES) {
-  const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones(o.flag, o.lane - 1) : makeCrates();
+  const g = o.type === "truck" ? makeKeiTruck() : o.type === "cones" ? makeCones(o.flag, o.lane - 1) : makeCrates(o.flag, o.lane - 1);
   g.position.x = (o.lane - 1) * 90 / UNIT * 1.03; // 車線の3D位置（バイクと同じ換算）
   scene.add(g);
   obstacleMeshes.push({ mesh: g, def: o, parts: g.userData.scatterParts || null });
