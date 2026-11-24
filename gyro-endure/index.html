@@ -68,7 +68,7 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  </div>
 
  <div class="sub">
- 上から降ってくるスライムを<b>下に落とさず</b>長時間耐えよう！スマホは<b>端末の傾き（ジャイロ）</b>、PCは<b>左右キー / ドラッグ / 傾きボタン</b>で床を傾けられます。同色はくっついて大きくなります。
+ 上から降ってくるスライムを<b>下に落とさず</b>長時間耐えよう！<b>ドラッグ（PCはA/Dキーも）</b>で台を左右に動かして、狙った場所でキャッチ。台を傾けるのは、スマホは<b>端末の傾き（ジャイロ）</b>、PCは<b>左右キー / 傾きボタン</b>です。同色はくっついて大きくなります。
  </div>
  <div class="status" id="g2-status">床を傾けてスライムを中央に保ちつつ、下に落ちないよう耐えよう！</div>
 
@@ -88,7 +88,7 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  <button class="btn" id="g2-reset" type="button">リセット</button>
  </div>
  <div class="key-hint">
- <span>PC操作：← / → キー、またはキャンバス上で左右ドラッグ</span>
+ <span>PC操作：←/→で傾ける、A/Dかドラッグで台を移動</span>
  <span>巨大玉はフチでふんばりきれず滑りやすい！</span>
  </div>
 </div>
@@ -145,7 +145,9 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  // 入力状態（ジャイロ＋キーボード＋ボタン＋ドラッグ）
  var gyroEnabled=false, gyroTargetAngle=0;
  var keyLeft=false, keyRight=false, btnLeft=false, btnRight=false;
- var dragAngle=0, isDragging=false, dragStartX=0, dragStartAng=0;
+ var keySlideL=false, keySlideR=false;
+ var isDragging=false, dragStartX=0, dragStartDeck=0;
+ var deckX=DECK_CX, prevDeckX=DECK_CX, deckVel=0;
 
  function handleOrientation(e){
  if(!gyroEnabled)return;
@@ -191,12 +193,16 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  });
 
  window.addEventListener('keydown',function(e){
- if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')keyLeft=true;
- if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')keyRight=true;
+ if(e.key==='ArrowLeft')keyLeft=true;
+ if(e.key==='ArrowRight')keyRight=true;
+ if(e.key==='a'||e.key==='A')keySlideL=true;
+ if(e.key==='d'||e.key==='D')keySlideR=true;
  });
  window.addEventListener('keyup',function(e){
- if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')keyLeft=false;
- if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')keyRight=false;
+ if(e.key==='ArrowLeft')keyLeft=false;
+ if(e.key==='ArrowRight')keyRight=false;
+ if(e.key==='a'||e.key==='A')keySlideL=false;
+ if(e.key==='d'||e.key==='D')keySlideR=false;
  });
 
  function bindHoldBtn(btn, setter){
@@ -212,13 +218,13 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  isDragging=true;
  var r=cv.getBoundingClientRect();
  dragStartX=(e.clientX-r.left)*(W/r.width);
- dragStartAng=dragAngle;
+ dragStartDeck=deckX;
  });
  window.addEventListener('pointermove',function(e){
  if(!isDragging)return;
  var r=cv.getBoundingClientRect();
  var x=(e.clientX-r.left)*(W/r.width);
- dragAngle=Math.max(-0.36, Math.min(0.36, dragStartAng + (x-dragStartX)*0.0042));
+ deckX=Math.max(DECK_W*0.5+4, Math.min(W-DECK_W*0.5-4, dragStartDeck + (x-dragStartX)));
  });
  window.addEventListener('pointerup',function(){ isDragging=false; });
 
@@ -226,14 +232,14 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  var angle, angV, slimes, tethers, popups, parts, uid;
 
  function deckSurfaceY(x){
- var dx=x - DECK_CX, halfW=DECK_W*0.5;
+ var dx=x - deckX, halfW=DECK_W*0.5;
  var q=Math.max(-1, Math.min(1, dx/halfW));
  return DECK_Y + dx*Math.tan(angle) + BOWL*(1 - q*q);
  }
 
  function reset(){
  hp=5; elapsed=0; score=0; over=false; time=0; spawnTimer=0.5;
- angle=0; angV=0; dragAngle=0;
+ angle=0; angV=0; deckX=DECK_CX; prevDeckX=DECK_CX; deckVel=0;
  slimes=[]; tethers=[]; popups=[]; parts=[]; uid=1;
  elOver.style.display='none';
  spawnSlime(1, 1, DECK_CX - 28, 120);
@@ -332,18 +338,22 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  var targetAng=0;
  if(keyLeft || btnLeft)targetAng=-0.32;
  else if(keyRight || btnRight)targetAng=0.32;
- else if(isDragging)targetAng=dragAngle;
  else if(gyroEnabled)targetAng=gyroTargetAngle;
- else targetAng=dragAngle;
 
  // 皿上のスライム重心によるわずかな自然揺れ
  var torque=0;
  for(var i=0;i<slimes.length;i++){
- if(!slimes[i].dropped)torque+=(slimes[i].x-DECK_CX)*slimes[i].mass;
+ if(!slimes[i].dropped)torque+=(slimes[i].x-deckX)*slimes[i].mass;
  }
  var desired=Math.max(-0.38, Math.min(0.38, targetAng + torque*0.00025));
  angV+=((desired-angle)*12 - angV*4.5)*dt;
  angle+=angV*dt;
+
+ // 台の左右スライド（A/Dキー）と、台上の玉を運ぶための速度
+ if(keySlideL)deckX-=200*dt;
+ if(keySlideR)deckX+=200*dt;
+ deckX=Math.max(DECK_W*0.5+4, Math.min(W-DECK_W*0.5-4, deckX));
+ deckVel=(deckX-prevDeckX)/Math.max(dt,0.001); prevDeckX=deckX;
 
  // 落下スポーン（時間が経つほど少し間隔が詰まる）
  spawnTimer-=dt;
@@ -354,8 +364,8 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  }
 
  var halfW=DECK_W*0.5;
- var leftEdgeX=DECK_CX - halfW;
- var rightEdgeX=DECK_CX + halfW;
+ var leftEdgeX=deckX - halfW;
+ var rightEdgeX=deckX + halfW;
 
  for(var j=slimes.length-1;j>=0;j--){
  var b=slimes[j];
@@ -378,11 +388,12 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
 
  if(withinDeckX && b.y + b.r >= surfY && b.vy >= -40){
  b.y=surfY - b.r;
+ b.x+=deckVel*dt;
  if(b.vy>30)b.vy*=-0.12;
  b.onDeck=true;
 
  // 傾斜＋お椀の勾配による滑り加速（端ほど中央へ戻す力が働く）
- var slopeForce=(Math.sin(angle) - 2*BOWL*(b.x - DECK_CX)/(halfW*halfW))*340;
+ var slopeForce=(Math.sin(angle) - 2*BOWL*(b.x - deckX)/(halfW*halfW))*340;
  b.vx+=slopeForce*dt;
  b.vx*=Math.exp(-dt*2.1);
  b.x+=b.vx*dt;
@@ -390,7 +401,7 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  // 端（左右のフチ）での「ふんばり → 限界で滑り落ち」
  var distToEdge=Math.min(Math.abs(b.x-leftEdgeX), Math.abs(rightEdgeX-b.x));
  var sizeFactor=1 + Math.max(0,(b.mass-2))*0.28;
- var outDir=(b.x<DECK_CX)?-1:1;
+ var outDir=(b.x<deckX)?-1:1;
 
  if(b.x < leftEdgeX - b.r*0.2 || b.x > rightEdgeX + b.r*0.2){
  // フチを越えて落下開始
@@ -485,7 +496,7 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
 
  // 傾く床（シーソーデッキ）
  ctx.save();
- ctx.translate(DECK_CX, DECK_Y);
+ ctx.translate(deckX, DECK_Y);
  ctx.rotate(angle);
 
  // お椀型の受け面（中央が少し窪む曲線で描く）
@@ -508,9 +519,9 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
 
  // 支点ピラー
  ctx.beginPath();
- ctx.moveTo(DECK_CX-22, H-6);
- ctx.lineTo(DECK_CX, DECK_Y+5);
- ctx.lineTo(DECK_CX+22, H-6);
+ ctx.moveTo(deckX-22, H-6);
+ ctx.lineTo(deckX, DECK_Y+5);
+ ctx.lineTo(deckX+22, H-6);
  ctx.closePath();
  ctx.fillStyle='#8c8274';
  ctx.fill();
