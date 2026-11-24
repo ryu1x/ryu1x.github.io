@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ジャイロ傾き耐久 — スライム落下防止ゲーム</title>
+<style>
+:root{
+ --bg:#f5f0e6;
+ --surface:#ffffff;
+ --surface-muted:#ebe3d5;
+ --text:#24201a;
+ --muted:#6f6659;
+ --border:#d6ccb9;
+ --accent:#d15a38;
+ --ok:#239c5a;
+ --danger:#e04355;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;}
+body{padding:12px 10px 28px;}
+.wrap{max-width:390px;margin:0 auto;}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;}
+.title{font-weight:800;font-size:15px;}
+.title span{font-weight:500;font-size:11px;color:var(--muted);}
+.hdr-r{display:flex;align-items:center;gap:6px;font-size:12px;}
+.pill{background:var(--surface);border:1px solid var(--border);border-radius:99px;padding:2px 8px;font-weight:700;font-size:11px;}
+.btn-mini{border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:99px;padding:2px 9px;font-size:11px;font-weight:700;cursor:pointer;}
+.btn-mini:hover{background:var(--surface-muted);}
+.hud{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:6px;}
+.hud-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:5px 6px;text-align:center;}
+.hud-k{font-size:10px;color:var(--muted);line-height:1.1;}
+.hud-v{font-size:13px;font-weight:800;margin-top:2px;}
+.sub{font-size:11.5px;color:var(--muted);line-height:1.42;margin-bottom:6px;}
+.sub b{color:var(--text);}
+.status{font-size:12px;font-weight:700;margin-bottom:6px;min-height:18px;color:var(--accent);}
+.cv-wrap{position:relative;}
+canvas{width:100%;display:block;background:var(--surface);border:1px solid var(--border);border-radius:14px;touch-action:none;}
+.controls{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;}
+.btn{border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:99px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;}
+.btn:hover{background:var(--surface-muted);}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.btn.active{border-color:var(--ok);background:#eafaf1;color:#177a43;}
+.key-hint{font-size:11px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between;gap:6px;}
+.over{
+ display:none;position:absolute;inset:0;border-radius:14px;
+ background:rgba(26,22,18,.68);color:#fff;
+ align-items:center;justify-content:center;flex-direction:column;gap:10px;
+ text-align:center;padding:18px;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <div class="hdr">
+ <div class="title">ジャイロ傾き耐久 <span>スライム落下防止</span></div>
+ <div class="hdr-r">
+ <span class="pill">最長 <span id="g2-best">0.0s</span></span>
+ <button id="g2-mute" class="btn-mini" type="button">音 ON</button>
+ </div>
+ </div>
+
+ <div class="hud">
+ <div class="hud-box"><div class="hud-k">残りライフ</div><div class="hud-v" id="g2-hp">5</div></div>
+ <div class="hud-box"><div class="hud-k">耐久タイム</div><div class="hud-v" id="g2-time">0.0s</div></div>
+ <div class="hud-box"><div class="hud-k">お皿の玉</div><div class="hud-v" id="g2-cnt">0</div></div>
+ <div class="hud-box"><div class="hud-k">スコア</div><div class="hud-v" id="g2-score">0</div></div>
+ </div>
+
+ <div class="sub">
+ 上から降ってくるスライムを<b>下に落とさず</b>長時間耐えよう！スマホは<b>端末の傾き（ジャイロ）</b>、PCは<b>左右キー / ドラッグ / 傾きボタン</b>で床を傾けられます。同色はくっついて大きくなります。
+ </div>
+ <div class="status" id="g2-status">床を傾けてスライムを中央に保ちつつ、下に落ちないよう耐えよう！</div>
+
+ <div class="cv-wrap">
+ <canvas id="g2-cv" width="370" height="440"></canvas>
+ <div class="over" id="g2-over">
+ <div style="font-size:20px;font-weight:800;" id="g2-over-t">下に落ちすぎた！</div>
+ <div style="font-size:13px;line-height:1.5;" id="g2-over-d">耐久 0.0秒 ・ スコア 0</div>
+ <button id="g2-retry" style="border:0;border-radius:99px;padding:9px 20px;background:#fff;color:#222;font-weight:800;cursor:pointer;">もう一回</button>
+ </div>
+ </div>
+
+ <div class="controls">
+ <button class="btn primary" id="g2-gyro" type="button">ジャイロ有効化</button>
+ <button class="btn" id="g2-left" type="button">← 左へ傾ける</button>
+ <button class="btn" id="g2-right" type="button">右へ傾ける →</button>
+ <button class="btn" id="g2-reset" type="button">リセット</button>
+ </div>
+ <div class="key-hint">
+ <span>PC操作：← / → キー、またはキャンバス上で左右ドラッグ</span>
+ <span>巨大玉はフチでふんばりきれず滑りやすい！</span>
+ </div>
+</div>
+
+<script>
+(function(){
+ var W=370, H=440;
+ var DECK_CX=W*0.5, DECK_Y=352, DECK_W=264;
+ var COLORS=[
+ {f:'#ff5964',d:'#c92c39',hi:'rgba(255,255,255,.6)'},
+ {f:'#2fbf71',d:'#1b8f4f',hi:'rgba(255,255,255,.6)'},
+ {f:'#ffc93c',d:'#c7920e',hi:'rgba(255,255,255,.65)'},
+ {f:'#4d96ff',d:'#2966c2',hi:'rgba(255,255,255,.6)'}
+ ];
+
+ var cv=document.getElementById('g2-cv'), ctx=cv.getContext('2d');
+ var elHp=document.getElementById('g2-hp'), elTime=document.getElementById('g2-time');
+ var elCnt=document.getElementById('g2-cnt'), elScore=document.getElementById('g2-score');
+ var elBest=document.getElementById('g2-best'), elStatus=document.getElementById('g2-status');
+ var elOver=document.getElementById('g2-over'), elOverT=document.getElementById('g2-over-t'), elOverD=document.getElementById('g2-over-d');
+ var elMute=document.getElementById('g2-mute'), elGyro=document.getElementById('g2-gyro');
+
+ var bestSec=0;
+ try{ bestSec=Number(localStorage.getItem('gyro2d-best-sec')||'0')||0; }catch(e){}
+ elBest.textContent=bestSec.toFixed(1)+'s';
+
+ var muted=false, audioCtx=null;
+ function ensureAudio(){
+ if(muted)return null;
+ if(!audioCtx){ var AC=window.AudioContext||window.webkitAudioContext; if(AC)audioCtx=new AC(); }
+ if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume().catch(function(){});
+ return audioCtx;
+ }
+ function tone(f0,f1,dur,type,vol,delay){
+ var ac=ensureAudio(); if(!ac)return;
+ var t=ac.currentTime+(delay||0);
+ var o=ac.createOscillator(), g=ac.createGain();
+ o.type=type||'sine';
+ o.frequency.setValueAtTime(f0,t);
+ if(f1)o.frequency.exponentialRampToValueAtTime(Math.max(30,f1),t+dur);
+ g.gain.setValueAtTime(0.0001,t);
+ g.gain.linearRampToValueAtTime(vol||0.05,t+0.01);
+ g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+ o.connect(g); g.connect(ac.destination);
+ o.start(t); o.stop(t+dur+0.02);
+ }
+ elMute.addEventListener('click',function(){
+ muted=!muted;
+ elMute.textContent=muted?'音 OFF':'音 ON';
+ if(!muted)ensureAudio();
+ });
+
+ // 入力状態（ジャイロ＋キーボード＋ボタン＋ドラッグ）
+ var gyroEnabled=false, gyroTargetAngle=0;
+ var keyLeft=false, keyRight=false, btnLeft=false, btnRight=false;
+ var dragAngle=0, isDragging=false, dragStartX=0, dragStartAng=0;
+
+ function handleOrientation(e){
+ if(!gyroEnabled)return;
+ // gammaは左右の傾き（-90〜90度）
+ if(typeof e.gamma==='number'){
+ var clamped=Math.max(-35, Math.min(35, e.gamma));
+ gyroTargetAngle=(clamped/35)*0.36;
+ }
+ }
+
+ elGyro.addEventListener('click',function(){
+ ensureAudio();
+ if(gyroEnabled){
+ gyroEnabled=false;
+ elGyro.classList.remove('active');
+ elGyro.textContent='ジャイロ有効化';
+ updHud('ジャイロをOFFにしました（キー/ドラッグ/ボタンで操作可能）');
+ return;
+ }
+ if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+ DeviceOrientationEvent.requestPermission().then(function(res){
+ if(res==='granted'){
+ window.addEventListener('deviceorientation', handleOrientation);
+ gyroEnabled=true;
+ elGyro.classList.add('active');
+ elGyro.textContent='ジャイロ ON';
+ updHud('端末を左右に傾けて床のバランスを取ろう！');
+ }else{
+ updHud('ジャイロ許可が得られませんでした。キー/ドラッグ/ボタンで遊べます');
+ }
+ }).catch(function(){
+ updHud('ジャイロを利用できません。キー/ドラッグ/ボタンで遊べます');
+ });
+ }else if(typeof DeviceOrientationEvent!=='undefined'){
+ window.addEventListener('deviceorientation', handleOrientation);
+ gyroEnabled=true;
+ elGyro.classList.add('active');
+ elGyro.textContent='ジャイロ ON';
+ updHud('端末を左右に傾けて床のバランスを取ろう！');
+ }else{
+ updHud('この端末はジャイロ非対応です。キー/ドラッグ/ボタンで遊べます');
+ }
+ });
+
+ window.addEventListener('keydown',function(e){
+ if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')keyLeft=true;
+ if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')keyRight=true;
+ });
+ window.addEventListener('keyup',function(e){
+ if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')keyLeft=false;
+ if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')keyRight=false;
+ });
+
+ function bindHoldBtn(btn, setter){
+ btn.addEventListener('pointerdown',function(e){ e.preventDefault(); ensureAudio(); setter(true); });
+ window.addEventListener('pointerup',function(){ setter(false); });
+ btn.addEventListener('pointercancel',function(){ setter(false); });
+ }
+ bindHoldBtn(document.getElementById('g2-left'), function(v){ btnLeft=v; });
+ bindHoldBtn(document.getElementById('g2-right'), function(v){ btnRight=v; });
+
+ cv.addEventListener('pointerdown',function(e){
+ ensureAudio();
+ isDragging=true;
+ var r=cv.getBoundingClientRect();
+ dragStartX=(e.clientX-r.left)*(W/r.width);
+ dragStartAng=dragAngle;
+ });
+ window.addEventListener('pointermove',function(e){
+ if(!isDragging)return;
+ var r=cv.getBoundingClientRect();
+ var x=(e.clientX-r.left)*(W/r.width);
+ dragAngle=Math.max(-0.36, Math.min(0.36, dragStartAng + (x-dragStartX)*0.0042));
+ });
+ window.addEventListener('pointerup',function(){ isDragging=false; });
+
+ var hp, elapsed, score, over, time, spawnTimer;
+ var angle, angV, slimes, tethers, popups, parts, uid;
+
+ function deckSurfaceY(x){
+ return DECK_Y + (x - DECK_CX)*Math.tan(angle);
+ }
+
+ function reset(){
+ hp=5; elapsed=0; score=0; over=false; time=0; spawnTimer=0.5;
+ angle=0; angV=0; dragAngle=0;
+ slimes=[]; tethers=[]; popups=[]; parts=[]; uid=1;
+ elOver.style.display='none';
+ spawnSlime(1, 1, DECK_CX - 28, 120);
+ spawnSlime(2, 2, DECK_CX + 34, 150);
+ updHud('上から降ってくるスライムを下に落とさず耐えよう！');
+ }
+
+ function updHud(msg){
+ elHp.textContent=Math.max(0, hp);
+ elTime.textContent=elapsed.toFixed(1)+'s';
+ elCnt.textContent=slimes.filter(function(s){return !s.dropped;}).length;
+ elScore.textContent=Math.floor(score);
+ if(msg)elStatus.textContent=msg;
+ if(elapsed > bestSec){
+ bestSec=elapsed;
+ elBest.textContent=bestSec.toFixed(1)+'s';
+ try{ localStorage.setItem('gyro2d-best-sec', bestSec.toFixed(2)); }catch(e){}
+ }
+ }
+
+ function spawnSlime(colorIdx, massVal, customX, customY){
+ var c=(typeof colorIdx==='number')?colorIdx:Math.floor(Math.random()*4);
+ var mass=massVal||(elapsed>25 && Math.random()<0.22 ? 2 : 1);
+ var r=10.5*Math.sqrt(mass);
+ var x=(typeof customX==='number')?customX:(DECK_CX - DECK_W*0.36 + Math.random()*DECK_W*0.72);
+ var y=(typeof customY==='number')?customY:28;
+ slimes.push({
+ id:uid++, c:c, mass:mass, r:r,
+ x:x, y:y,
+ vx:(Math.random()-0.5)*28,
+ vy:35 + Math.min(65, elapsed*1.2),
+ onDeck:false, dropped:false,
+ grip:0, strain:0, wob:0, wobV:0, jig:0.3, age:0
+ });
+ }
+
+ function mergeSlimes(big, sm){
+ var m=big.mass+sm.mass;
+ big.x=(big.x*big.mass+sm.x*sm.mass)/m;
+ big.y=(big.y*big.mass+sm.y*sm.mass)/m;
+ big.vx=(big.vx*big.mass+sm.vx*sm.mass)*0.5/m;
+ big.vy=(big.vy*big.mass+sm.vy*sm.mass)*0.5/m;
+ big.mass=m;
+ big.r=Math.min(28, 10.5*Math.sqrt(m));
+ big.wobV+=240;
+ big.jig=Math.min(1.5,(big.jig||0)+0.85);
+ score+=25*m;
+ slimes.splice(slimes.indexOf(sm),1);
+ tone(270+Math.min(260,m*22),(270+Math.min(260,m*22))*1.3,0.09,'sine',0.05);
+ popups.push({x:big.x,y:big.y-big.r-8,vy:-30,t:0,life:0.65,txt:'合体! 重さ'+m,c:big.c});
+ }
+
+ function onDroppedBottom(b){
+ if(b.dropped)return;
+ b.dropped=true;
+ hp--;
+ tone(150, 72, 0.22, 'sawtooth', 0.06);
+ popups.push({x:b.x, y:H-24, vy:-34, t:0, life:0.85, txt:'落下! ライフ -1', c:0});
+
+ // 落ちる瞬間の揺さぶりで近くのスライムを道連れに引きずりやすい状態にする
+ var reach=56 + b.r*2.2;
+ for(var j=0;j<slimes.length;j++){
+ var ob=slimes[j];
+ if(ob===b||ob.dropped)continue;
+ var d=Math.hypot(ob.x-b.x, ob.y-b.y);
+ if(d<reach){
+ var prox=1-d/reach;
+ ob.wobV+=200*prox;
+ ob.jig=Math.min(1.4,(ob.jig||0)+0.7*prox);
+ ob.vx+=(ob.x<b.x?-1:1)*85*prox;
+ tethers.push({x1:b.x,y1:b.y,x2:ob.x,y2:ob.y,t:0,life:0.32,c:b.c,w:3});
+ }
+ }
+
+ for(var p=0;p<9;p++){
+ parts.push({x:b.x,y:H-8,vx:(Math.random()-0.5)*110,vy:-40-Math.random()*80,t:0,life:0.38,c:b.c,r:2.4+Math.random()*2});
+ }
+
+ if(hp<=0){
+ over=true;
+ elOverT.textContent='下に落ちすぎた！';
+ elOverD.textContent='耐久 '+elapsed.toFixed(1)+'秒 ・ スコア '+Math.floor(score);
+ elOver.style.display='flex';
+ updHud();
+ }
+ }
+
+ function step(dt){
+ time+=dt;
+ if(over)return;
+
+ elapsed+=dt;
+ score+=dt*(10 + elapsed*0.8);
+
+ // 目標傾斜角の決定
+ var targetAng=0;
+ if(keyLeft || btnLeft)targetAng=-0.32;
+ else if(keyRight || btnRight)targetAng=0.32;
+ else if(isDragging)targetAng=dragAngle;
+ else if(gyroEnabled)targetAng=gyroTargetAngle;
+ else targetAng=dragAngle;
+
+ // 皿上のスライム重心によるわずかな自然揺れ
+ var torque=0;
+ for(var i=0;i<slimes.length;i++){
+ if(!slimes[i].dropped)torque+=(slimes[i].x-DECK_CX)*slimes[i].mass;
+ }
+ var desired=Math.max(-0.38, Math.min(0.38, targetAng + torque*0.00025));
+ angV+=((desired-angle)*12 - angV*4.5)*dt;
+ angle+=angV*dt;
+
+ // 落下スポーン（時間が経つほど少し間隔が詰まる）
+ spawnTimer-=dt;
+ if(spawnTimer<=0){
+ spawnSlime();
+ var interval=Math.max(0.55, 1.55 - elapsed*0.018);
+ spawnTimer=interval;
+ }
+
+ var halfW=DECK_W*0.5;
+ var leftEdgeX=DECK_CX - halfW;
+ var rightEdgeX=DECK_CX + halfW;
+
+ for(var j=slimes.length-1;j>=0;j--){
+ var b=slimes[j];
+ b.age+=dt;
+ b.wobV+=(-b.wob*210-b.wobV*7.5)*dt;
+ b.wob+=b.wobV*dt;
+ b.jig=Math.max(0,(b.jig||0)-1.8*dt);
+
+ if(b.dropped){
+ b.y+=b.vy*dt;
+ b.x+=b.vx*dt;
+ b.vy+=380*dt;
+ if(b.y>H+30)slimes.splice(j,1);
+ continue;
+ }
+
+ // 床（傾く板）との接触判定
+ var withinDeckX=(b.x >= leftEdgeX - b.r*0.35 && b.x <= rightEdgeX + b.r*0.35);
+ var surfY=deckSurfaceY(b.x);
+
+ if(withinDeckX && b.y + b.r >= surfY && b.vy >= -40){
+ b.y=surfY - b.r;
+ if(b.vy>30)b.vy*=-0.12;
+ b.onDeck=true;
+
+ // 傾斜による滑り加速
+ var slopeForce=Math.sin(angle)*340;
+ b.vx+=slopeForce*dt;
+ b.vx*=Math.exp(-dt*2.1);
+ b.x+=b.vx*dt;
+
+ // 端（左右のフチ）での「ふんばり → 限界で滑り落ち」
+ var distToEdge=Math.min(Math.abs(b.x-leftEdgeX), Math.abs(rightEdgeX-b.x));
+ var sizeFactor=1 + Math.max(0,(b.mass-2))*0.28;
+ var outDir=(b.x<DECK_CX)?-1:1;
+
+ if(b.x < leftEdgeX - b.r*0.2 || b.x > rightEdgeX + b.r*0.2){
+ // フチを越えて落下開始
+ b.grip += dt*(1.1 + b.mass*0.25)*sizeFactor;
+ b.strain=Math.min(1, 0.5+b.grip*0.5);
+ if(b.grip>=0.55){
+ b.onDeck=false;
+ b.vy=Math.max(55, Math.abs(b.vx)*0.5);
+ b.vx=outDir*(50 + b.mass*14);
+ }
+ }else if(distToEdge < 28){
+ // フチ際で粘着してふんばる（大きい玉ほどふんばりにくい）
+ var holdPull=-outDir * Math.max(12, 95/sizeFactor) * dt;
+ b.vx+=holdPull;
+ b.grip=Math.min(1, b.grip + dt*0.45*sizeFactor);
+ b.strain=Math.min(0.85, b.grip*0.8);
+ }else{
+ b.grip=Math.max(0, b.grip - dt*0.7);
+ b.strain=Math.max(0, b.strain - dt*2.5);
+ }
+ }else{
+ b.onDeck=false;
+ b.vy+=360*dt;
+ b.y+=b.vy*dt;
+ b.x+=b.vx*dt;
+ }
+
+ // 下端まで落ちたらライフ減少
+ if(b.y - b.r >= H - 4){
+ onDroppedBottom(b);
+ if(over)return;
+ }
+ }
+
+ // 同色合体＆衝突押し合い
+ for(var aIdx=0;aIdx<slimes.length;aIdx++){
+ var a=slimes[aIdx];
+ if(!a||a.dropped)continue;
+ for(var cIdx=aIdx+1;cIdx<slimes.length;cIdx++){
+ var c=slimes[cIdx];
+ if(!c||c.dropped)continue;
+ var dx=c.x-a.x, dy=c.y-a.y;
+ var dist=Math.hypot(dx,dy)||0.001;
+ var minD=a.r+c.r;
+ if(dist<minD){
+ if(a.c===c.c && a.age>0.12 && c.age>0.12 && a.mass+c.mass<=10){
+ var big=(a.mass>=c.mass)?a:c;
+ var sm=(big===a)?c:a;
+ mergeSlimes(big,sm);
+ break;
+ }
+ var ov=(minD-dist)*0.5, nx=dx/dist, ny=dy/dist;
+ a.x-=nx*ov; a.y-=ny*ov;
+ c.x+=nx*ov; c.y+=ny*ov;
+ a.vx-=nx*24*dt; c.vx+=nx*24*dt;
+ }
+ }
+ }
+
+ // エフェクト更新
+ for(var ti=tethers.length-1;ti>=0;ti--){ tethers[ti].t+=dt; if(tethers[ti].t>=tethers[ti].life)tethers.splice(ti,1); }
+ for(var pi=popups.length-1;pi>=0;pi--){ var pu=popups[pi]; pu.t+=dt; if(pu.t>=pu.life)popups.splice(pi,1); else pu.y+=pu.vy*dt; }
+ for(var pt=parts.length-1;pt>=0;pt--){ var q=parts[pt]; q.t+=dt; if(q.t>=q.life)parts.splice(pt,1); else{ q.x+=q.vx*dt; q.y+=q.vy*dt; q.vy+=240*dt; } }
+
+ updHud();
+ }
+
+ function draw(){
+ ctx.clearRect(0,0,W,H);
+
+ // 背景
+ var grad=ctx.createLinearGradient(0,0,0,H);
+ grad.addColorStop(0,'#f7fbff');
+ grad.addColorStop(0.82,'#eef4fa');
+ grad.addColorStop(1,'rgba(224,67,85,0.14)');
+ ctx.fillStyle=grad;
+ ctx.fillRect(0,0,W,H);
+
+ // 下端の「落下ライン（ここへ落ちるとライフ減少）」
+ ctx.save();
+ ctx.setLineDash([6,5]);
+ ctx.strokeStyle='rgba(224,67,85,0.65)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(12,H-6); ctx.lineTo(W-12,H-6);
+ ctx.stroke();
+ ctx.restore();
+ ctx.fillStyle='rgba(200,50,68,0.8)';
+ ctx.font='700 10px system-ui';
+ ctx.textAlign='right';
+ ctx.fillText('落下ライン（落ちるとライフ減少）', W-14, H-12);
+
+ // 傾く床（シーソーデッキ）
+ ctx.save();
+ ctx.translate(DECK_CX, DECK_Y);
+ ctx.rotate(angle);
+
+ // 影・本体
+ ctx.fillStyle='#3b3730';
+ ctx.beginPath();
+ ctx.roundRect(-DECK_W*0.5, -5, DECK_W, 10, 5);
+ ctx.fill();
+
+ // 中央安全ゾーンの目印
+ ctx.fillStyle='#239c5a';
+ ctx.fillRect(-38, -5, 76, 10);
+
+ // 端の滑りやすいゾーン目印
+ ctx.fillStyle='#e8a825';
+ ctx.fillRect(-DECK_W*0.5, -5, 24, 10);
+ ctx.fillRect(DECK_W*0.5-24, -5, 24, 10);
+ ctx.restore();
+
+ // 支点ピラー
+ ctx.beginPath();
+ ctx.moveTo(DECK_CX-22, H-6);
+ ctx.lineTo(DECK_CX, DECK_Y+5);
+ ctx.lineTo(DECK_CX+22, H-6);
+ ctx.closePath();
+ ctx.fillStyle='#8c8274';
+ ctx.fill();
+ ctx.strokeStyle='#5d554a';
+ ctx.lineWidth=1.5;
+ ctx.stroke();
+
+ // 道連れ糸
+ for(var ti=0;ti<tethers.length;ti++){
+ var th=tethers[ti], ta=1-th.t/th.life;
+ ctx.save();ctx.globalAlpha=ta*0.75;
+ ctx.beginPath();ctx.moveTo(th.x1,th.y1);ctx.lineTo(th.x2,th.y2);
+ ctx.lineWidth=th.w*ta+1;ctx.strokeStyle=COLORS[th.c].f;ctx.stroke();
+ ctx.restore();
+ }
+
+ // スライム描画
+ for(var si=0;si<slimes.length;si++){
+ var b=slimes[si], col=COLORS[b.c];
+ var jx=(b.strain>0.08 || b.jig>0.12)?(Math.random()-0.5)*3*Math.max(b.strain,b.jig*0.5):0;
+ var jy=(b.strain>0.08 || b.jig>0.12)?(Math.random()-0.5)*2*Math.max(b.strain,b.jig*0.5):0;
+
+ ctx.save();
+ if(b.dropped)ctx.globalAlpha=0.65;
+ ctx.translate(b.x+jx, b.y+jy);
+ var sx=1 + (b.strain||0)*0.22 + Math.sin(time*18+b.id)*0.04*(b.jig||0);
+ var sy=1 - (b.strain||0)*0.12 - Math.sin(time*18+b.id)*0.04*(b.jig||0);
+ ctx.scale(sx, sy);
+
+ ctx.beginPath();
+ for(var k=0;k<=12;k++){
+ var an=(k/12)*Math.PI*2;
+ var rr=b.r*(1+0.05*Math.sin(an*3+b.id+b.wob*0.02));
+ var px=Math.cos(an)*rr, py=Math.sin(an)*rr;
+ if(k===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+ }
+ ctx.closePath();
+ ctx.fillStyle=col.f;
+ ctx.fill();
+ ctx.lineWidth=1.8;
+ ctx.strokeStyle=col.d;
+ ctx.stroke();
+
+ ctx.beginPath();
+ ctx.ellipse(-b.r*0.32,-b.r*0.35,b.r*0.26,b.r*0.15,-0.5,0,Math.PI*2);
+ ctx.fillStyle=col.hi;
+ ctx.fill();
+
+ if(b.mass>=2){
+ ctx.fillStyle='#fff';
+ ctx.font='800 '+Math.round(Math.min(17,b.r*0.72))+'px system-ui';
+ ctx.textAlign='center';ctx.textBaseline='middle';
+ ctx.fillText(String(b.mass),0,1);
+ }
+ ctx.restore();
+ }
+
+ // パーティクル＆ポップアップ
+ for(var pt=0;pt<parts.length;pt++){
+ var q=parts[pt];
+ ctx.save();ctx.globalAlpha=1-q.t/q.life;
+ ctx.beginPath();ctx.arc(q.x,q.y,q.r,0,Math.PI*2);
+ ctx.fillStyle=COLORS[q.c].f;ctx.fill();ctx.restore();
+ }
+ for(var pu=0;pu<popups.length;pu++){
+ var popu=popups[pu];
+ ctx.save();ctx.globalAlpha=Math.min(1,(1-popu.t/popu.life)*1.4);
+ ctx.font='800 12px system-ui';ctx.textAlign='center';
+ ctx.lineWidth=3.5;ctx.strokeStyle='rgba(0,0,0,.45)';ctx.strokeText(popu.txt,popu.x,popu.y);
+ ctx.fillStyle='#fff';ctx.fillText(popu.txt,popu.x,popu.y);ctx.restore();
+ }
+ }
+
+ var last=performance.now();
+ function loop(now){
+ var dt=Math.min(0.033,(now-last)/1000);
+ last=now;
+ step(dt);
+ draw();
+ requestAnimationFrame(loop);
+ }
+ requestAnimationFrame(loop);
+
+ document.getElementById('g2-reset').addEventListener('click',reset);
+ document.getElementById('g2-retry').addEventListener('click',reset);
+
+ reset();
+})();
+</script>
+</body>
+</html>
