@@ -97,6 +97,7 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
 (function(){
  var W=370, H=440;
  var DECK_CX=W*0.5, DECK_Y=352, DECK_W=264;
+ var BOWL=11; // お椀型の窪み深さ（中央がこれだけ下がる）
  var COLORS=[
  {f:'#ff5964',d:'#c92c39',hi:'rgba(255,255,255,.6)'},
  {f:'#2fbf71',d:'#1b8f4f',hi:'rgba(255,255,255,.6)'},
@@ -225,7 +226,9 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  var angle, angV, slimes, tethers, popups, parts, uid;
 
  function deckSurfaceY(x){
- return DECK_Y + (x - DECK_CX)*Math.tan(angle);
+ var dx=x - DECK_CX, halfW=DECK_W*0.5;
+ var q=Math.max(-1, Math.min(1, dx/halfW));
+ return DECK_Y + dx*Math.tan(angle) + BOWL*(1 - q*q);
  }
 
  function reset(){
@@ -378,8 +381,8 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  if(b.vy>30)b.vy*=-0.12;
  b.onDeck=true;
 
- // 傾斜による滑り加速
- var slopeForce=Math.sin(angle)*340;
+ // 傾斜＋お椀の勾配による滑り加速（端ほど中央へ戻す力が働く）
+ var slopeForce=(Math.sin(angle) - 2*BOWL*(b.x - DECK_CX)/(halfW*halfW))*340;
  b.vx+=slopeForce*dt;
  b.vx*=Math.exp(-dt*2.1);
  b.x+=b.vx*dt;
@@ -485,20 +488,22 @@ canvas{width:100%;display:block;background:var(--surface);border:1px solid var(-
  ctx.translate(DECK_CX, DECK_Y);
  ctx.rotate(angle);
 
- // 影・本体
- ctx.fillStyle='#3b3730';
+ // お椀型の受け面（中央が少し窪む曲線で描く）
+ var halfW2=DECK_W*0.5;
+ function deckPath(x0, x1){
  ctx.beginPath();
- ctx.roundRect(-DECK_W*0.5, -5, DECK_W, 10, 5);
- ctx.fill();
-
+ for(var lx=x0; lx<=x1; lx+=6){
+ var ly=BOWL*(1 - (lx/halfW2)*(lx/halfW2));
+ if(lx===x0)ctx.moveTo(lx, ly); else ctx.lineTo(lx, ly);
+ }
+ }
+ ctx.lineCap='round';
+ // 本体
+ ctx.strokeStyle='#3b3730'; ctx.lineWidth=11; deckPath(-halfW2, halfW2); ctx.stroke();
  // 中央安全ゾーンの目印
- ctx.fillStyle='#239c5a';
- ctx.fillRect(-38, -5, 76, 10);
-
+ ctx.strokeStyle='#239c5a'; deckPath(-38, 38); ctx.stroke();
  // 端の滑りやすいゾーン目印
- ctx.fillStyle='#e8a825';
- ctx.fillRect(-DECK_W*0.5, -5, 24, 10);
- ctx.fillRect(DECK_W*0.5-24, -5, 24, 10);
+ ctx.strokeStyle='#e8a825'; deckPath(-halfW2, -halfW2 + 24); ctx.stroke(); deckPath(halfW2 - 24, halfW2); ctx.stroke();
  ctx.restore();
 
  // 支点ピラー
